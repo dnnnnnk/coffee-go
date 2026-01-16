@@ -10,7 +10,7 @@ from typing import Any, Literal, Mapping, Optional
 import aiohttp
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import db
+from . import db
 
 
 # ----------------------------

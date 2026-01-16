@@ -9,7 +9,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import db
+from . import db
 
 
 # ----------------------------

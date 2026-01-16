@@ -8,10 +8,10 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-import services
-from config import get_settings
-from db import session_scope
-from keyboards import (
+from . import services
+from .config import get_settings
+from .db import session_scope
+from .keyboards import (
     back_to_main_kb,
     cafes_kb,
     categories_kb,
@@ -22,7 +22,7 @@ from keyboards import (
     products_kb,
     cart_kb,
 )
-from models import (
+from .models import (
     AddToCartCB,
     CafeCB,
     CartClearCB,
@@ -42,7 +42,7 @@ from models import (
     FSM_KEY_GROUP_RULES,
 )
 
-import payments
+from . import payments
 
 router = Router()
 settings = get_settings()

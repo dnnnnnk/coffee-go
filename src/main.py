@@ -9,13 +9,14 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from config import get_settings
-from db import get_engine, init_db, session_scope
-from handlers import router as main_router
-
-import payments
+from .config import get_settings
+from .db import get_engine, init_db, session_scope
+from .handlers import router as main_router
+from . import payments
+from . import services
 
 logger = logging.getLogger("easycoffee")
+
 
 
 def _setup_logging(level: str) -> None:
@@ -109,6 +110,11 @@ async def main() -> None:
     _setup_logging(settings.LOG_LEVEL)
 
     await init_db(settings)
+
+    # автосид для локального теста: если БД пустая — добавим минимальные данные
+    if settings.ENV in {"dev", "test"}:
+        async with session_scope(settings) as s:
+            await services.seed_minimal_demo_data(s)
 
     engine = get_engine(settings)
     try:
