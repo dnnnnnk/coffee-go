@@ -66,6 +66,17 @@ async def try_pin(bot, chat_id: int, message_id: int) -> None:
         # в личке нельзя, в группе может не быть прав — пофиг
         pass
 
+async def try_delete(q: CallbackQuery) -> None:
+    try:
+        if q.message:
+            await q.message.delete()
+    except Exception:
+        # если нельзя удалить — хотя бы уберём клавиатуру
+        try:
+            await q.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
 async def safe_edit(q: CallbackQuery, text: str, reply_markup=None) -> None:
     """
     Надёжное редактирование:
@@ -652,16 +663,18 @@ async def on_checkout(q: CallbackQuery, callback_data: CheckoutCB, state: FSMCon
                 receipt = await services.build_order_receipt(s, res.order_id)
                 text = services.format_receipt(receipt)
 
-                # 1) Текущее сообщение превращаем в "управлялку" с кнопками
-                await safe_edit(
-                    q,
+                # Удаляем старое сообщение (чтобы порядок был норм)
+                await try_delete(q)
+
+                # 1) Чек (будет выше)
+                msg = await q.message.answer(text)
+                await try_pin(q.bot, q.message.chat.id, msg.message_id)
+
+                # 2) Сообщение с кнопками (будет ниже чека)
+                await q.message.answer(
                     f"✅ Заказ оплачен.\nКод: <b>{res.code}</b>\nСумма: <b>{res.total:.2f} ₽</b>",
                     reply_markup=checkout_kb(cafe_id=cafe_id, pay_url=None, payments_enabled=False),
                 )
-
-                # 2) Чек отдельным сообщением (без кнопок)
-                msg = await q.message.answer(text)
-                await try_pin(q.bot, q.message.chat.id, msg.message_id)
                 return
 
             # BOOT MODE: pending_payment + создаём оплату
@@ -722,16 +735,18 @@ async def on_pay_check(q: CallbackQuery, callback_data: PayCheckCB, state: FSMCo
                 receipt = await services.build_order_receipt(s, callback_data.order_id)
                 text = services.format_receipt(receipt)
 
-                # обновляем сообщение "оплата" (можно убрать клаву или оставить навигацию)
-                await safe_edit(
-                    q,
-                    "✅ Оплата подтверждена. Чек отправил отдельным сообщением ниже.",
-                    reply_markup=checkout_kb(cafe_id=callback_data.cafe_id, pay_url=None, payments_enabled=True),
-                )
+                # удалить сообщение "оплати/я оплатил", чтобы не мешало порядку
+                await try_delete(q)
 
-                # чек отдельным сообщением
+                # 1) чек
                 msg = await q.message.answer(text)
                 await try_pin(q.bot, q.message.chat.id, msg.message_id)
+
+                # 2) кнопки ниже
+                await q.message.answer(
+                    "✅ Оплата подтверждена. Что дальше?",
+                    reply_markup=checkout_kb(cafe_id=callback_data.cafe_id, pay_url=None, payments_enabled=True),
+                )
                 return
 
         # ещё не оплатилось
