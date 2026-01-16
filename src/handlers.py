@@ -98,7 +98,7 @@ def _fmt_cart_text(cart: services.CartView) -> str:
 
     lines = ["🧺 <b>Корзина</b>\n"]
 
-    for ln in cart.lines:
+    for i, ln in enumerate(cart.lines, start=1):
         mods = ""
         if ln.modifiers:
             mods = " — " + ", ".join(
@@ -111,7 +111,7 @@ def _fmt_cart_text(cart: services.CartView) -> str:
             status = f"\n⛔ <i>{ln.blocked_reason or 'Позиция недоступна'}</i>"
 
         lines.append(
-            f"#{ln.cart_item_id} • <b>{ln.product_name}</b>{mods}\n"
+            f"#{i} • <b>{ln.product_name}</b>{mods}\n"
             f"{ln.qty} × {ln.unit_price:.2f} ₽ = <b>{ln.line_total:.2f} ₽</b>{status}"
         )
 
@@ -210,11 +210,11 @@ async def _show_cart(q: CallbackQuery, state: FSMContext, cafe_id: int) -> None:
     async with session_scope(settings) as s:
         cart = await services.get_cart_view(s, settings, user_id=q.from_user.id, cafe_id=cafe_id)
 
-    line_ids = [ln.cart_item_id for ln in cart.lines]
+    line_pairs = [(i, ln.cart_item_id) for i, ln in enumerate(cart.lines, start=1)]
     await safe_edit(
         q,
         _fmt_cart_text(cart),
-        reply_markup=cart_kb(cafe_id=cafe_id, line_ids=line_ids, has_lines=bool(cart.lines)),
+        reply_markup=cart_kb(cafe_id=cafe_id, line_pairs=line_pairs, has_lines=bool(cart.lines)),
     )
 
 

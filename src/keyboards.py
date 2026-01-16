@@ -214,18 +214,17 @@ def modifiers_kb(
 # Expect each line has: cart_item_id, title, qty, line_total, blocked
 # ----------------------------
 
-def cart_kb(*, cafe_id: int, line_ids: Iterable[int], has_lines: bool) -> InlineKeyboardMarkup:
+def cart_kb(*, cafe_id: int, line_pairs: Iterable[tuple[int, int]], has_lines: bool) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
 
     # кнопки удаления по позициям (показываем только id; текст строки — в сообщении)
     # если линий много — это будет простыня. но у нас MAX_CART_ITEMS ограничен.
-    for cid in line_ids:
+    for idx, cid in line_pairs:
         b.button(
-            text=f"❌ Удалить #{int(cid)}",
+            text=f"❌ Удалить #{idx}",
             callback_data=CartDelCB(cafe_id=cafe_id, cart_item_id=int(cid)).pack(),
         )
-
-    if line_ids:
+    if line_pairs:
         b.adjust(1)
 
     if has_lines:
