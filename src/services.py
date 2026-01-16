@@ -4,6 +4,8 @@ from sqlalchemy import select
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Iterable
+from decimal import Decimal
+from sqlalchemy.exc import IntegrityError
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -528,13 +530,16 @@ async def _create_order_from_cart(
     user_id: int,
     cafe_id: int,
     status: str,
+    pickup_type: str = "asap",
+    pickup_at=None,
 ) -> CheckoutResult:
     cart = await _assert_cart_ready_for_checkout(session, settings, user_id=user_id, cafe_id=cafe_id)
 
-    # generate unique code + insert order (retry on collision)
+    # generate unique code + insert order (retry only on code collision)
     last_err: Exception | None = None
     order_id: int | None = None
     code: str | None = None
+
     for _ in range(10):
         code_try = settings.make_order_code()
         try:
@@ -545,20 +550,39 @@ async def _create_order_from_cart(
                 cafe_id=cafe_id,
                 status=status,
                 total=float(cart.total),
+                pickup_type=pickup_type,
+                pickup_at=pickup_at,
             )
             code = code_try
             break
+
         except IntegrityError as e:
             last_err = e
-            continue
+
+            # ✅ Ретраим ТОЛЬКО при конфликте уникальности кода
+            msg = str(e).lower()
+            is_code_collision = (
+                ("orders.code" in msg) and ("unique" in msg or "constraint" in msg)
+            )
+            if is_code_collision:
+                continue
+
+            # ❌ это не конфликт кода, это реальная ошибка схемы/ограничений
+            raise ServiceError(f"Ошибка базы при создании заказа: {e}") from e
+
     if order_id is None or code is None:
         raise ServiceError("Не удалось создать заказ (конфликт кода).") from last_err
 
     # write order items with snapshots
     for ln in cart.lines:
         modifier_ids = [int(x) for x in ln.modifiers_key.split(",") if x.strip()] if ln.modifiers_key else []
-        # full normalized modifiers (names/deltas) for snapshots
-        mods_rows = await validate_modifier_selection(session, product_id=ln.product_id, modifier_ids=modifier_ids)
+
+        mods_rows = await validate_modifier_selection(
+            session,
+            product_id=ln.product_id,
+            modifier_ids=modifier_ids,
+        )
+
         delta_sum = sum((m["price_delta"] for m in mods_rows), Decimal("0.00"))
         unit_price = d2(ln.base_price + delta_sum)
         line_total = money_mul(unit_price, ln.qty)
@@ -586,24 +610,51 @@ async def _create_order_from_cart(
     # clear cart after order created
     await db.clear_cart(session, user_id, cafe_id)
 
-    return CheckoutResult(order_id=order_id, code=code, total=cart.total, status=status, payment_url=None)
+    return CheckoutResult(
+        order_id=order_id,
+        code=code,
+        total=cart.total,
+        status=status,
+        payment_url=None,
+    )
+
+async def checkout_test_paid(
+    session: AsyncSession,
+    settings,
+    *,
+    user_id: int,
+    cafe_id: int,
+    pickup_type: str = "asap",
+    pickup_at=None,
+) -> CheckoutResult:
+    return await _create_order_from_cart(
+        session, settings,
+        user_id=user_id,
+        cafe_id=cafe_id,
+        status="paid",
+        pickup_type=pickup_type,
+        pickup_at=pickup_at,
+    )
 
 
-async def checkout_test_paid(session: AsyncSession, settings, *, user_id: int, cafe_id: int) -> CheckoutResult:
-    """
-    Тестовый флоу без оплаты.
-    Создаёт заказ со статусом 'paid', выдаёт код.
-    """
-    return await _create_order_from_cart(session, settings, user_id=user_id, cafe_id=cafe_id, status="paid")
 
-
-async def checkout_pending_payment(session: AsyncSession, settings, *, user_id: int, cafe_id: int) -> CheckoutResult:
-    """
-    Боевой флоу (без вызова ЮKassa тут).
-    Создаёт заказ со статусом 'pending_payment'.
-    """
-    return await _create_order_from_cart(session, settings, user_id=user_id, cafe_id=cafe_id, status="pending_payment")
-
+async def checkout_pending_payment(
+    session: AsyncSession,
+    settings,
+    *,
+    user_id: int,
+    cafe_id: int,
+    pickup_type: str = "asap",
+    pickup_at=None,
+) -> CheckoutResult:
+    return await _create_order_from_cart(
+        session, settings,
+        user_id=user_id,
+        cafe_id=cafe_id,
+        status="pending_payment",
+        pickup_type=pickup_type,
+        pickup_at=pickup_at,
+    )
 
 # ----------------------------
 # Profile
@@ -765,6 +816,18 @@ def format_receipt(receipt: dict) -> str:
     lines.append(f"✅ <b>Заказ создан</b> • <b>#{order_id}</b>")
     lines.append(f"🏪 Кофейня: <b>{cafe_name}</b>")
     lines.append(f"🔑 Код выдачи: <b>{code}</b>")
+    pickup_type = str(order.get("pickup_type") or "asap")
+    pickup_at = order.get("pickup_at")
+
+    if pickup_type == "asap":
+        lines.append("⏱️ Время: <b>как можно скорее</b>")
+    else:
+        # pickup_at может быть datetime или строка — покажем HH:MM
+        try:
+            hhmm = pickup_at.strftime("%H:%M")
+        except Exception:
+            hhmm = str(pickup_at)[:5]
+        lines.append(f"🕒 Время: <b>к {hhmm}</b>")
     lines.append("")
     lines.append("🧾 <b>Состав заказа:</b>")
 
@@ -784,5 +847,6 @@ def format_receipt(receipt: dict) -> str:
     lines.append("")
     lines.append(f"💰 Итого: <b>{total:.2f} ₽</b>")
     lines.append("Приходи, показывай код — и забирай ☕")
+
 
     return "\n".join(lines)

@@ -20,11 +20,19 @@ class UserFlow(StatesGroup):
     """
     choosing_cafe = State()
     choosing_modifiers = State()
+    choosing_pickup = State()
+    waiting_pickup_time = State()
 
 
 # ----------------------------
 # CallbackData
 # ----------------------------
+
+class PickupASAPCB(CallbackData, prefix="pasap"):
+    cafe_id: int
+
+class PickupTimeCB(CallbackData, prefix="ptime"):
+    cafe_id: int
 
 class PayCheckCB(CallbackData, prefix="pchk"):
     cafe_id: int
@@ -152,3 +160,5 @@ FSM_KEY_CAFE_ID = "cafe_id"
 FSM_KEY_PRODUCT_ID = "product_id"
 FSM_KEY_SELECTED_MODS = "selected_mods"  # list[int]
 FSM_KEY_GROUP_RULES = "group_rules"      # dict[group_id -> {min,max,required}]
+FSM_KEY_PICKUP_MODE = "pickup_mode"      # "asap" | "time"
+FSM_KEY_PICKUP_TIME = "pickup_time"      # "HH:MM"

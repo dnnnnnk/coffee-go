@@ -1,9 +1,9 @@
 # src/db.py
 from __future__ import annotations
-
 import contextlib
 from datetime import datetime, timezone
 from typing import Iterable, Sequence
+from datetime import datetime
 
 from sqlalchemy import (
     JSON,
@@ -205,6 +205,8 @@ orders = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("paid_at", DateTime(timezone=True), nullable=True),
+    Column("pickup_type", String(16), nullable=False, default="asap"),  # asap | time
+    Column("pickup_at", DateTime(timezone=False), nullable=True),
     Index("ix_orders_user", "user_id"),
     Index("ix_orders_cafe", "cafe_id"),
     Index("ix_orders_status", "status"),
@@ -344,10 +346,22 @@ async def init_db(settings) -> None:
     Creates schema and applies simple versioned migrations.
     For now: SCHEMA_VERSION=1 and we just create_all.
     """
+
     engine = get_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(metadata.create_all)
+        # --- lightweight migrations for SQLite (add columns if missing) ---
+        res = await conn.exec_driver_sql("PRAGMA table_info(orders);")
+        cols = {row[1] for row in res.fetchall()}  # row[1] = name
+        if "created_at" not in cols:
+            await conn.exec_driver_sql(
+                "ALTER TABLE orders ADD COLUMN created_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP);"
+            )
+        if "pickup_type" not in cols:
+            await conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN pickup_type TEXT NOT NULL DEFAULT 'asap';")
 
+        if "pickup_at" not in cols:
+            await conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN pickup_at DATETIME NULL;")
         # ensure schema_meta row
         res = await conn.execute(select(schema_meta.c.version).where(schema_meta.c.id == 1))
         row = res.first()
@@ -647,6 +661,8 @@ async def count_active_orders(session: AsyncSession, cafe_id: int, active_status
     return int((await session.execute(q)).scalar_one())
 
 
+
+
 async def create_order(
     session: AsyncSession,
     *,
@@ -655,23 +671,28 @@ async def create_order(
     cafe_id: int,
     status: str,
     total: float,
+    pickup_type: str = "asap",
+    pickup_at=None,
 ) -> int:
-    now = utcnow()
+    now = datetime.utcnow()
+
     q = (
-        insert(orders)
+        orders.insert()
         .values(
             code=code,
             user_id=user_id,
             cafe_id=cafe_id,
             status=status,
             total=total,
-            created_at=now,
-            updated_at=now,
-            paid_at=(now if status == "paid" else None),
+            created_at=now,     # ✅
+            updated_at=now,     # ✅ ВОТ ЭТОГО НЕ ХВАТАЛО
+            pickup_type=pickup_type,
+            pickup_at=pickup_at,
         )
         .returning(orders.c.id)
     )
-    return int((await session.execute(q)).scalar_one())
+    row = (await session.execute(q)).scalar_one()
+    return int(row)
 
 
 async def add_order_item(

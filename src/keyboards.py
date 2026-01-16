@@ -3,6 +3,7 @@ from __future__ import annotations
 from .models import PayCheckCB
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable
+from .models import PickupASAPCB, PickupTimeCB
 
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -52,6 +53,13 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     b.adjust(1)
     return b.as_markup()
 
+def pickup_choice_kb(cafe_id: int) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="⚡ Как можно скорее", callback_data=PickupASAPCB(cafe_id=cafe_id).pack())
+    b.button(text="🕒 Ко времени", callback_data=PickupTimeCB(cafe_id=cafe_id).pack())
+    b.button(text="⬅️ Назад в корзину", callback_data=CartOpenCB(cafe_id=cafe_id).pack())
+    b.adjust(1)
+    return b.as_markup()
 
 def back_to_main_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()

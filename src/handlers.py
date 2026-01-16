@@ -8,7 +8,8 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-
+from .keyboards import pickup_choice_kb
+from datetime import datetime, timedelta
 from . import services
 from . import payments
 from .config import get_settings
@@ -43,6 +44,10 @@ from .models import (
     FSM_KEY_PRODUCT_ID,
     FSM_KEY_SELECTED_MODS,
     FSM_KEY_GROUP_RULES,
+    PickupASAPCB,
+    PickupTimeCB,
+    FSM_KEY_PICKUP_MODE,
+    FSM_KEY_PICKUP_TIME,
 )
 
 router = Router()
@@ -646,6 +651,123 @@ async def on_mods_done(q: CallbackQuery, callback_data: ModsDoneCB, state: FSMCo
         await safe_edit(q, e.message, reply_markup=back_to_main_kb())
 
 
+@router.callback_query(PickupASAPCB.filter())
+async def on_pickup_asap(q: CallbackQuery, callback_data: PickupASAPCB, state: FSMContext) -> None:
+    await q.answer()
+    cafe_id = callback_data.cafe_id
+
+    await state.set_state(None)
+    await state.update_data({FSM_KEY_PICKUP_MODE: "asap", FSM_KEY_PICKUP_TIME: None})
+
+    async with session_scope(settings) as s:
+        if not settings.PAYMENTS_ENABLED:
+            res = await services.checkout_test_paid(s, settings, user_id=q.from_user.id, cafe_id=cafe_id, pickup_type="asap", pickup_at=None)
+            receipt = await services.build_order_receipt(s, res.order_id)
+            text = services.format_receipt(receipt)
+
+            await try_delete(q)
+            msg = await q.message.answer(text)
+            await try_pin(q.bot, q.message.chat.id, msg.message_id)
+            await q.message.answer(
+                f"✅ Заказ оплачен.\nКод: <b>{res.code}</b>\nСумма: <b>{res.total:.2f} ₽</b>",
+                reply_markup=checkout_kb(cafe_id=cafe_id, pay_url=None, payments_enabled=False),
+            )
+            return
+
+        res = await services.checkout_pending_payment(s, settings, user_id=q.from_user.id, cafe_id=cafe_id, pickup_type="asap", pickup_at=None)
+        pay = await payments.create_payment_for_order(
+            s,
+            settings,
+            order_id=res.order_id,
+            amount=res.total,
+            user_id=q.from_user.id,
+            cafe_id=cafe_id,
+        )
+
+    await safe_edit(
+        q,
+        f"💳 Оплата заказа <b>#{res.order_id}</b>\nСумма: <b>{res.total:.2f} ₽</b>\n\n"
+        f"Оплати по кнопке ниже, потом нажми <b>«Я оплатил»</b>.",
+        reply_markup=payment_pending_kb(cafe_id=cafe_id, order_id=res.order_id, pay_url=pay.confirmation_url),
+    )
+
+@router.callback_query(PickupTimeCB.filter())
+async def on_pickup_time(q: CallbackQuery, callback_data: PickupTimeCB, state: FSMContext) -> None:
+    await q.answer()
+    cafe_id = callback_data.cafe_id
+
+    await state.set_state(UserFlow.waiting_pickup_time)
+    await state.update_data({FSM_KEY_CAFE_ID: cafe_id, FSM_KEY_PICKUP_MODE: "time"})
+
+    await safe_edit(q, "Ок, напиши время в формате <b>hh:mm</b> (не раньше чем через 10 минут).", reply_markup=back_to_main_kb())
+
+@router.message(UserFlow.waiting_pickup_time)
+async def on_pickup_time_input(m: Message, state: FSMContext) -> None:
+    text = (m.text or "").strip()
+    data = await state.get_data()
+    cafe_id = _safe_int(data.get(FSM_KEY_CAFE_ID))
+
+    if not cafe_id:
+        await state.set_state(None)
+        await m.answer("Сессия устарела. Открой корзину заново.")
+        return
+
+    # parse HH:MM
+    try:
+        hh, mm = text.split(":")
+        hh = int(hh)
+        mm = int(mm)
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            raise ValueError
+    except Exception:
+        await m.answer("Нужен формат <b>hh:mm</b>. Например: <b>14:30</b>")
+        return
+
+    now = datetime.now()
+    pickup_at = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+
+    # если время уже прошло сегодня — считаем что имелось в виду завтра
+    if pickup_at <= now:
+        pickup_at = pickup_at + timedelta(days=1)
+
+    if pickup_at < now + timedelta(minutes=10):
+        await m.answer("Слишком рано. Время должно быть минимум через <b>10 минут</b> от текущего.")
+        return
+
+    await state.set_state(None)
+    await state.update_data({FSM_KEY_PICKUP_TIME: f"{hh:02d}:{mm:02d}"})
+
+    # дальше то же оформление что и ASAP, но pickup_type="time"
+    async with session_scope(settings) as s:
+        if not settings.PAYMENTS_ENABLED:
+            res = await services.checkout_test_paid(s, settings, user_id=m.from_user.id, cafe_id=cafe_id, pickup_type="time", pickup_at=pickup_at)
+            receipt = await services.build_order_receipt(s, res.order_id)
+            check = services.format_receipt(receipt)
+
+            msg = await m.answer(check)
+            await try_pin(m.bot, m.chat.id, msg.message_id)
+            await m.answer(
+                f"✅ Заказ оплачен.\nКод: <b>{res.code}</b>\nСумма: <b>{res.total:.2f} ₽</b>",
+                reply_markup=checkout_kb(cafe_id=cafe_id, pay_url=None, payments_enabled=False),
+            )
+            return
+
+        res = await services.checkout_pending_payment(s, settings, user_id=m.from_user.id, cafe_id=cafe_id, pickup_type="time", pickup_at=pickup_at)
+        pay = await payments.create_payment_for_order(
+            s,
+            settings,
+            order_id=res.order_id,
+            amount=res.total,
+            user_id=m.from_user.id,
+            cafe_id=cafe_id,
+        )
+
+    await m.answer(
+        f"💳 Оплата заказа <b>#{res.order_id}</b>\nСумма: <b>{res.total:.2f} ₽</b>\n\n"
+        f"Оплати по кнопке ниже, потом нажми <b>«Я оплатил»</b>.",
+        reply_markup=payment_pending_kb(cafe_id=cafe_id, order_id=res.order_id, pay_url=pay.confirmation_url),
+    )
+
 # ----------------------------
 # Checkout
 # ----------------------------
@@ -655,50 +777,9 @@ async def on_checkout(q: CallbackQuery, callback_data: CheckoutCB, state: FSMCon
     await q.answer()
     cafe_id = int(callback_data.cafe_id)
 
-    try:
-        async with session_scope(settings) as s:
-            # TEST MODE: сразу paid + чек + "закрепить"
-            if not settings.PAYMENTS_ENABLED:
-                res = await services.checkout_test_paid(s, settings, user_id=q.from_user.id, cafe_id=cafe_id)
-                receipt = await services.build_order_receipt(s, res.order_id)
-                text = services.format_receipt(receipt)
-
-                # Удаляем старое сообщение (чтобы порядок был норм)
-                await try_delete(q)
-
-                # 1) Чек (будет выше)
-                msg = await q.message.answer(text)
-                await try_pin(q.bot, q.message.chat.id, msg.message_id)
-
-                # 2) Сообщение с кнопками (будет ниже чека)
-                await q.message.answer(
-                    f"✅ Заказ оплачен.\nКод: <b>{res.code}</b>\nСумма: <b>{res.total:.2f} ₽</b>",
-                    reply_markup=checkout_kb(cafe_id=cafe_id, pay_url=None, payments_enabled=False),
-                )
-                return
-
-            # BOOT MODE: pending_payment + создаём оплату
-            res = await services.checkout_pending_payment(s, settings, user_id=q.from_user.id, cafe_id=cafe_id)
-            pay = await payments.create_payment_for_order(
-                s,
-                settings,
-                order_id=res.order_id,
-                amount=res.total,
-                user_id=q.from_user.id,
-                cafe_id=cafe_id,
-            )
-
-            await safe_edit(
-                q,
-                f"💳 Оплата заказа <b>#{res.order_id}</b>\nСумма: <b>{res.total:.2f} ₽</b>\n\n"
-                f"Оплати по кнопке ниже, потом нажми <b>«Я оплатил»</b>.",
-                reply_markup=payment_pending_kb(cafe_id=cafe_id, order_id=res.order_id, pay_url=pay.confirmation_url),
-            )
-
-    except services.ServiceError as e:
-        await safe_edit(q, e.message, reply_markup=back_to_main_kb())
-    except payments.PaymentError as e:
-        await safe_edit(q, f"Ошибка оплаты: {e.message}", reply_markup=back_to_main_kb())
+    await state.set_state(UserFlow.choosing_pickup)
+    await state.update_data({FSM_KEY_CAFE_ID: cafe_id})
+    await safe_edit(q, "Когда сделать кофе?", reply_markup=pickup_choice_kb(cafe_id))
 
 # ----------------------------
 # Profile
