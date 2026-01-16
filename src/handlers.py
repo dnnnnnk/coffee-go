@@ -18,6 +18,7 @@ from .keyboards import (
     cafes_kb,
     categories_kb,
     checkout_kb,
+    payment_pending_kb,
     main_menu_kb,
     modifiers_kb,
     product_kb,
@@ -26,6 +27,7 @@ from .keyboards import (
 )
 from .models import (
     CafeCB,
+    PayCheckCB,
     CategoryCB,
     ProductCB,
     ModGroupCB,
@@ -57,6 +59,12 @@ def _safe_int(x: Any) -> int | None:
     except Exception:
         return None
 
+async def try_pin(bot, chat_id: int, message_id: int) -> None:
+    try:
+        await bot.pin_chat_message(chat_id=chat_id, message_id=message_id, disable_notification=True)
+    except Exception:
+        # в личке нельзя, в группе может не быть прав — пофиг
+        pass
 
 async def safe_edit(q: CallbackQuery, text: str, reply_markup=None) -> None:
     """
@@ -216,6 +224,8 @@ async def _show_cart(q: CallbackQuery, state: FSMContext, cafe_id: int) -> None:
         _fmt_cart_text(cart),
         reply_markup=cart_kb(cafe_id=cafe_id, line_pairs=line_pairs, has_lines=bool(cart.lines)),
     )
+
+
 
 
 # ----------------------------
@@ -636,15 +646,25 @@ async def on_checkout(q: CallbackQuery, callback_data: CheckoutCB, state: FSMCon
 
     try:
         async with session_scope(settings) as s:
+            # TEST MODE: сразу paid + чек + "закрепить"
             if not settings.PAYMENTS_ENABLED:
                 res = await services.checkout_test_paid(s, settings, user_id=q.from_user.id, cafe_id=cafe_id)
+                receipt = await services.build_order_receipt(s, res.order_id)
+                text = services.format_receipt(receipt)
+
+                # 1) Текущее сообщение превращаем в "управлялку" с кнопками
                 await safe_edit(
                     q,
-                    f"✅ Заказ создан.\nКод получения: <b>{res.code}</b>\nСумма: <b>{res.total:.2f} ₽</b>",
+                    f"✅ Заказ оплачен.\nКод: <b>{res.code}</b>\nСумма: <b>{res.total:.2f} ₽</b>",
                     reply_markup=checkout_kb(cafe_id=cafe_id, pay_url=None, payments_enabled=False),
                 )
+
+                # 2) Чек отдельным сообщением (без кнопок)
+                msg = await q.message.answer(text)
+                await try_pin(q.bot, q.message.chat.id, msg.message_id)
                 return
 
+            # BOOT MODE: pending_payment + создаём оплату
             res = await services.checkout_pending_payment(s, settings, user_id=q.from_user.id, cafe_id=cafe_id)
             pay = await payments.create_payment_for_order(
                 s,
@@ -658,15 +678,14 @@ async def on_checkout(q: CallbackQuery, callback_data: CheckoutCB, state: FSMCon
             await safe_edit(
                 q,
                 f"💳 Оплата заказа <b>#{res.order_id}</b>\nСумма: <b>{res.total:.2f} ₽</b>\n\n"
-                f"После оплаты код появится в заказе.",
-                reply_markup=checkout_kb(cafe_id=cafe_id, pay_url=pay.confirmation_url, payments_enabled=True),
+                f"Оплати по кнопке ниже, потом нажми <b>«Я оплатил»</b>.",
+                reply_markup=payment_pending_kb(cafe_id=cafe_id, order_id=res.order_id, pay_url=pay.confirmation_url),
             )
 
     except services.ServiceError as e:
         await safe_edit(q, e.message, reply_markup=back_to_main_kb())
     except payments.PaymentError as e:
         await safe_edit(q, f"Ошибка оплаты: {e.message}", reply_markup=back_to_main_kb())
-
 
 # ----------------------------
 # Profile
@@ -687,3 +706,38 @@ async def on_profile(q: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query()
 async def unknown_callback(q: CallbackQuery) -> None:
     await q.answer("Кнопка устарела. Открой меню заново: /start", show_alert=True)
+
+
+@router.callback_query(PayCheckCB.filter())
+async def on_pay_check(q: CallbackQuery, callback_data: PayCheckCB, state: FSMContext) -> None:
+    await q.answer()
+
+    try:
+        async with session_scope(settings) as s:
+            # дергаем статус у провайдера
+            info = await payments.refresh_payment_status_from_provider(s, settings, order_id=callback_data.order_id)
+
+            # если succeeded -> чек + закрепить
+            if str(info.get("status")) == "succeeded":
+                receipt = await services.build_order_receipt(s, callback_data.order_id)
+                text = services.format_receipt(receipt)
+
+                # обновляем сообщение "оплата" (можно убрать клаву или оставить навигацию)
+                await safe_edit(
+                    q,
+                    "✅ Оплата подтверждена. Чек отправил отдельным сообщением ниже.",
+                    reply_markup=checkout_kb(cafe_id=callback_data.cafe_id, pay_url=None, payments_enabled=True),
+                )
+
+                # чек отдельным сообщением
+                msg = await q.message.answer(text)
+                await try_pin(q.bot, q.message.chat.id, msg.message_id)
+                return
+
+        # ещё не оплатилось
+        await q.answer("Платёж ещё не подтверждён. Попробуй через пару секунд.", show_alert=True)
+
+    except payments.PaymentError as e:
+        await q.answer(f"Не могу проверить оплату: {e.message}", show_alert=True)
+    except services.ServiceError as e:
+        await q.answer(e.message, show_alert=True)

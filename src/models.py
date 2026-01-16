@@ -26,6 +26,10 @@ class UserFlow(StatesGroup):
 # CallbackData
 # ----------------------------
 
+class PayCheckCB(CallbackData, prefix="pchk"):
+    cafe_id: int
+    order_id: int
+
 class NavCB(CallbackData, prefix="nav"):
     page: int
 

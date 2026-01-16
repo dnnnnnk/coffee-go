@@ -1,6 +1,6 @@
 # src/services.py
 from __future__ import annotations
-
+from sqlalchemy import select
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Iterable
@@ -688,3 +688,101 @@ async def seed_minimal_demo_data(session: AsyncSession) -> None:
             dict(group_id=milk_group_id, name="Овсяное", price_delta=Decimal("40.00"), is_active=True, sort=1, created_at=now, updated_at=now),
         ],
     )
+
+
+async def build_order_receipt(session: AsyncSession, order_id: int) -> dict:
+    """
+    Возвращает данные для чека:
+    {
+      order: {...},
+      cafe: {...},
+      items: [
+        {title, qty, line_total, modifiers:[{title, delta},...]}
+      ]
+    }
+    """
+    order = await db.get_order(session, order_id)
+    if not order:
+        raise NotFound("Заказ не найден.")
+
+    cafe = await db.get_cafe(session, int(order["cafe_id"]))
+    if not cafe:
+        raise NotFound("Кофейня не найдена.")
+
+    # items
+    q_items = select(
+        db.order_items.c.id,
+        db.order_items.c.title_snapshot,
+        db.order_items.c.qty,
+        db.order_items.c.line_total,
+        db.order_items.c.modifiers_key,
+    ).where(db.order_items.c.order_id == order_id)
+
+    items_rows = (await session.execute(q_items)).mappings().all()
+
+    items: list[dict] = []
+    for it in items_rows:
+        item_id = int(it["id"])
+        # modifiers snapshots
+        q_mods = select(
+            db.order_item_modifiers.c.title_snapshot,
+            db.order_item_modifiers.c.price_delta_snapshot,
+        ).where(db.order_item_modifiers.c.order_item_id == item_id)
+
+        mods_rows = (await session.execute(q_mods)).mappings().all()
+        mods = []
+        for m in mods_rows:
+            mods.append(
+                {
+                    "title": str(m["title_snapshot"]),
+                    "delta": d2(m["price_delta_snapshot"]),
+                }
+            )
+
+        items.append(
+            {
+                "title": str(it["title_snapshot"]),
+                "qty": int(it["qty"]),
+                "line_total": d2(it["line_total"]),
+                "modifiers": mods,
+            }
+        )
+
+    return {"order": order, "cafe": cafe, "items": items}
+
+
+def format_receipt(receipt: dict) -> str:
+    order = receipt["order"]
+    cafe = receipt["cafe"]
+    items = receipt["items"]
+
+    order_id = int(order["id"])
+    code = str(order["code"])
+    total = d2(order["total"])
+    cafe_name = str(cafe["name"])
+
+    lines = []
+    lines.append(f"✅ <b>Заказ создан</b> • <b>#{order_id}</b>")
+    lines.append(f"🏪 Кофейня: <b>{cafe_name}</b>")
+    lines.append(f"🔑 Код выдачи: <b>{code}</b>")
+    lines.append("")
+    lines.append("🧾 <b>Состав заказа:</b>")
+
+    for it in items:
+        title = it["title"]
+        qty = it["qty"]
+        line_total = it["line_total"]
+        if it["modifiers"]:
+            mods = ", ".join(
+                f"{m['title']}{f' +{m['delta']:.2f}₽' if m['delta'] != 0 else ''}".replace(".00", "")
+                for m in it["modifiers"]
+            )
+            lines.append(f"• {title} ×{qty} — <b>{line_total:.2f} ₽</b>\n  <i>{mods}</i>")
+        else:
+            lines.append(f"• {title} ×{qty} — <b>{line_total:.2f} ₽</b>")
+
+    lines.append("")
+    lines.append(f"💰 Итого: <b>{total:.2f} ₽</b>")
+    lines.append("Приходи, показывай код — и забирай ☕")
+
+    return "\n".join(lines)

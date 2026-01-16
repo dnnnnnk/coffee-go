@@ -1,6 +1,6 @@
 # src/keyboards.py
 from __future__ import annotations
-
+from .models import PayCheckCB
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable
 
@@ -136,6 +136,19 @@ def product_kb(cafe_id: int, product_id: int, *, has_modifiers: bool) -> InlineK
 
     b.button(text="🧺 Корзина", callback_data=CartOpenCB(cafe_id=cafe_id).pack())
     b.button(text="⬅️ Назад", callback_data=f"open:products:{cafe_id}")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def payment_pending_kb(*, cafe_id: int, order_id: int, pay_url: str | None) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+
+    if pay_url:
+        b.button(text="🔗 Перейти к оплате", url=pay_url)
+
+    b.button(text="✅ Я оплатил", callback_data=PayCheckCB(cafe_id=cafe_id, order_id=order_id).pack())
+    b.button(text="🧺 Корзина", callback_data=CartOpenCB(cafe_id=cafe_id).pack())
+    b.button(text="⬅️ Каталог", callback_data=f"open:categories:{cafe_id}")
     b.adjust(1)
     return b.as_markup()
 
