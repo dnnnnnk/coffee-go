@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from typing import Any
-
+from sqlalchemy import select, func
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardButton
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
@@ -108,6 +110,30 @@ async def safe_edit(q: CallbackQuery, text: str, reply_markup=None) -> None:
             # главное — не падать
             pass
 
+def cart_conflict_kb(*, back_cb: str) -> Any:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🧹 Очистить корзину и добавить", callback_data="cart:clear_and_add_pending")
+    kb.button(text="⬅️ Назад", callback_data=back_cb)
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+# ----------------------------
+# Cart/cafe conflict error helper
+# ----------------------------
+
+def _is_cart_cafe_conflict_error(e: Exception) -> bool:
+    msg = getattr(e, "message", None) or str(e)
+    return "Корзина привязана к другой кофейне" in msg
+
+
+async def _get_cart_bound_cafe_id(session, user_id: int) -> int | None:
+    """
+    Возвращает cafe_id, к которому реально привязана текущая корзина юзера.
+    """
+    q = select(func.min(db.cart_items.c.cafe_id)).where(db.cart_items.c.user_id == user_id)
+    cafe_id = (await session.execute(q)).scalar_one()
+    return int(cafe_id) if cafe_id is not None else None
 
 async def _get_selected_cafe_id(state: FSMContext) -> int | None:
     data = await state.get_data()
@@ -513,12 +539,53 @@ async def on_cart_del(q: CallbackQuery, callback_data: CartDelCB, state: FSMCont
     await _show_cart(q, state, callback_data.cafe_id)
 
 
+
 @router.callback_query(CartClearCB.filter())
 async def on_cart_clear(q: CallbackQuery, callback_data: CartClearCB, state: FSMContext) -> None:
     await q.answer()
     async with session_scope(settings) as s:
         await services.clear_cart(s, user_id=q.from_user.id, cafe_id=callback_data.cafe_id)
     await _show_cart(q, state, callback_data.cafe_id)
+
+
+# ----------------------------
+# Clear and add pending (cart:clear_and_add_pending)
+# ----------------------------
+
+@router.callback_query(F.data == "cart:clear_and_add_pending")
+async def on_clear_and_add_pending(q: CallbackQuery, state: FSMContext) -> None:
+    await q.answer()
+
+    data = await state.get_data()
+    pending = data.get("pending_add")
+
+    if not pending:
+        await safe_edit(q, "Кнопка устарела. Открой меню заново.", reply_markup=back_to_main_kb())
+        return
+
+    target_cafe_id = int(pending["cafe_id"])
+    product_id = int(pending["product_id"])
+    modifier_ids = [int(x) for x in (pending.get("modifier_ids") or [])]
+    qty = int(pending.get("qty") or 1)
+
+    async with session_scope(settings) as s:
+        bound = await _get_cart_bound_cafe_id(s, user_id=q.from_user.id)
+        if bound is not None:
+            await services.clear_cart(s, user_id=q.from_user.id, cafe_id=int(bound))
+
+        await services.add_to_cart(
+            s,
+            settings,
+            user_id=q.from_user.id,
+            cafe_id=target_cafe_id,
+            product_id=product_id,
+            modifier_ids=modifier_ids,
+            qty=qty,
+        )
+
+    await state.update_data({"pending_add": None})
+    await _set_selected_cafe_id(state, target_cafe_id)
+    await _show_cart(q, state, target_cafe_id)
 
 
 # ----------------------------
@@ -552,7 +619,44 @@ async def on_add_simple(q: CallbackQuery, state: FSMContext) -> None:
             )
         await _set_selected_cafe_id(state, cafe_id)
         await _show_cart(q, state, cafe_id)
+
+    except services.Validation:
+        await state.update_data(
+            {
+                "pending_add": {
+                    "cafe_id": cafe_id,
+                    "product_id": product_id,
+                    "modifier_ids": [],
+                    "qty": 1,
+                }
+            }
+        )
+        await safe_edit(
+            q,
+            "🧺 Корзина привязана к другой кофейне.\nОчистить её и добавить этот товар?",
+            reply_markup=cart_conflict_kb(back_cb=f"open:products:{cafe_id}"),
+        )
+
     except services.ServiceError as e:
+        # иногда конфликт кофейни летит как ServiceError (Validation наследуется от ServiceError)
+        if _is_cart_cafe_conflict_error(e):
+            await state.update_data(
+                {
+                    "pending_add": {
+                        "cafe_id": cafe_id,
+                        "product_id": product_id,
+                        "modifier_ids": [],
+                        "qty": 1,
+                    }
+                }
+            )
+            await safe_edit(
+                q,
+                "🧺 Корзина привязана к другой кофейне.\nОчистить её и добавить этот товар?",
+                reply_markup=cart_conflict_kb(back_cb=f"open:products:{cafe_id}"),
+            )
+            return
+
         await safe_edit(q, e.message, reply_markup=product_kb(cafe_id, product_id, has_modifiers=False))
 
 
@@ -726,7 +830,43 @@ async def on_mods_done(q: CallbackQuery, callback_data: ModsDoneCB, state: FSMCo
         await state.set_state(None)
         await _show_cart(q, state, cafe_id)
 
+    except services.Validation:
+        await state.update_data(
+            {
+                "pending_add": {
+                    "cafe_id": cafe_id,
+                    "product_id": product_id,
+                    "modifier_ids": selected,
+                    "qty": 1,
+                }
+            }
+        )
+        await safe_edit(
+            q,
+            "🧺 Корзина привязана к другой кофейне.\nОчистить её и добавить этот товар?",
+            reply_markup=cart_conflict_kb(back_cb=f"open:products:{cafe_id}"),
+        )
+
     except services.ServiceError as e:
+        # иногда конфликт кофейни летит как ServiceError
+        if _is_cart_cafe_conflict_error(e):
+            await state.update_data(
+                {
+                    "pending_add": {
+                        "cafe_id": cafe_id,
+                        "product_id": product_id,
+                        "modifier_ids": selected,
+                        "qty": 1,
+                    }
+                }
+            )
+            await safe_edit(
+                q,
+                "🧺 Корзина привязана к другой кофейне.\nОчистить её и добавить этот товар?",
+                reply_markup=cart_conflict_kb(back_cb=f"open:mods:{cafe_id}:{product_id}"),
+            )
+            return
+
         await safe_edit(q, e.message, reply_markup=back_to_main_kb())
 
 
