@@ -709,75 +709,213 @@ async def get_profile(session: AsyncSession, user_id: int) -> dict:
 
 async def seed_minimal_demo_data(session: AsyncSession) -> None:
     """
-    Нужен только для локального старта, если у тебя пустая БД.
-    Ничего не ломает, если уже есть данные (по именам могут быть конфликты).
-    Лучше вызывать вручную в dev.
+    Сиды для локального старта (если БД пустая).
+    Создаёт 3 кофейни, категории, товары и модификаторы.
+    Если cafes уже есть — ничего не делает.
     """
     now = db.utcnow()
 
-    # if cafes exist - do nothing
     exists = (await session.execute(select(func.count()).select_from(db.cafes))).scalar_one()
     if int(exists) > 0:
         return
 
-    # cafe
-    cafe_id = int(
-        (await session.execute(
-            db.cafes.insert().values(name="Кофейня у дома", is_active=True, is_overloaded=False, created_at=now, updated_at=now
-            ).returning(db.cafes.c.id)
-        )).scalar_one()
-    )
+    async def ins_cafe(name: str, *, active=True, overloaded=False) -> int:
+        return int(
+            (await session.execute(
+                db.cafes.insert().values(
+                    name=name,
+                    is_active=active,
+                    is_overloaded=overloaded,
+                    created_at=now,
+                    updated_at=now,
+                ).returning(db.cafes.c.id)
+            )).scalar_one()
+        )
 
-    # category
-    cat_id = int(
-        (await session.execute(
-            db.categories.insert().values(cafe_id=cafe_id, name="Кофе", sort=0, is_active=True, created_at=now, updated_at=now
-            ).returning(db.categories.c.id)
-        )).scalar_one()
-    )
+    async def ins_cat(cafe_id: int, name: str) -> int:
+        return int(
+            (await session.execute(
+                db.categories.insert().values(
+                    cafe_id=cafe_id,
+                    name=name,
+                    is_active=True,
+                    created_at=now,
+                    updated_at=now,
+                ).returning(db.categories.c.id)
+            )).scalar_one()
+        )
 
-    # product
-    latte_id = int(
-        (await session.execute(
-            db.products.insert().values(
-                cafe_id=cafe_id,
-                category_id=cat_id,
-                name="Латте",
-                description="Классический латте",
-                base_price=Decimal("220.00"),
-                is_active=True,
-                created_at=now,
-                updated_at=now,
-            ).returning(db.products.c.id)
-        )).scalar_one()
-    )
+    async def ins_prod(
+        cafe_id: int,
+        category_id: int,
+        name: str,
+        base_price: str,
+        description: str | None = None,
+    ) -> int:
+        return int(
+            (await session.execute(
+                db.products.insert().values(
+                    cafe_id=cafe_id,
+                    category_id=category_id,
+                    name=name,
+                    description=description,
+                    base_price=Decimal(base_price),
+                    is_active=True,
+                    created_at=now,
+                    updated_at=now,
+                ).returning(db.products.c.id)
+            )).scalar_one()
+        )
 
-    # modifier group
-    milk_group_id = int(
-        (await session.execute(
-            db.modifier_groups.insert().values(
-                product_id=latte_id,
-                name="Молоко",
-                required=True,
-                min_select=1,
-                max_select=1,
-                sort=0,
-                is_active=True,
-                created_at=now,
-                updated_at=now,
-            ).returning(db.modifier_groups.c.id)
-        )).scalar_one()
-    )
+    async def ins_group(
+        product_id: int,
+        name: str,
+        *,
+        required: bool,
+        min_select: int,
+        max_select: int,
+    ) -> int:
+        return int(
+            (await session.execute(
+                db.modifier_groups.insert().values(
+                    product_id=product_id,
+                    name=name,
+                    required=required,
+                    min_select=min_select,
+                    max_select=max_select,
+                    is_active=True,
+                    created_at=now,
+                    updated_at=now,
+                ).returning(db.modifier_groups.c.id)
+            )).scalar_one()
+        )
 
-    # modifiers
-    await session.execute(
-        db.modifiers.insert(),
-        [
-            dict(group_id=milk_group_id, name="Обычное", price_delta=Decimal("0.00"), is_active=True, sort=0, created_at=now, updated_at=now),
-            dict(group_id=milk_group_id, name="Овсяное", price_delta=Decimal("40.00"), is_active=True, sort=1, created_at=now, updated_at=now),
-        ],
-    )
+    async def ins_mods(group_id: int, mods: list[tuple[str, str]]) -> None:
+        payload = []
+        for (n, d) in mods:
+            payload.append(
+                dict(
+                    group_id=group_id,
+                    name=n,
+                    price_delta=Decimal(d),
+                    is_active=True,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        await session.execute(db.modifiers.insert(), payload)
 
+    # -------------------------------------------------------
+    # 1) Кофейня у дома
+    # -------------------------------------------------------
+    cafe1 = await ins_cafe("Кофейня у дома")
+    c1_coffee = await ins_cat(cafe1, "Кофе")
+    c1_food = await ins_cat(cafe1, "Еда")
+
+    espresso = await ins_prod(cafe1, c1_coffee, "Эспрессо", "160.00", "Крепко и быстро")
+    capp = await ins_prod(cafe1, c1_coffee, "Капучино", "210.00", "Классика на каждый день")
+    latte = await ins_prod(cafe1, c1_coffee, "Латте", "230.00", "Мягкий, молочный")
+    raf = await ins_prod(cafe1, c1_coffee, "Раф", "290.00", "Сливочный и сладкий")
+
+    croissant = await ins_prod(cafe1, c1_food, "Круассан", "190.00", "Свежий, хрустящий")
+    cheesecake = await ins_prod(cafe1, c1_food, "Чизкейк", "260.00", "Классический")
+
+    # latte modifiers
+    g_milk_latte = await ins_group(latte, "Молоко", required=True, min_select=1, max_select=1)
+    await ins_mods(g_milk_latte, [("Обычное", "0.00"), ("Безлактозное", "20.00"), ("Овсяное", "40.00")])
+
+    g_size_latte = await ins_group(latte, "Размер", required=True, min_select=1, max_select=1)
+    await ins_mods(g_size_latte, [("S", "0.00"), ("M", "40.00"), ("L", "80.00")])
+
+    g_syrup_latte = await ins_group(latte, "Сироп", required=False, min_select=0, max_select=2)
+    await ins_mods(g_syrup_latte, [("Ваниль", "30.00"), ("Карамель", "30.00"), ("Лесной орех", "30.00")])
+
+    # capp modifiers
+    g_milk_capp = await ins_group(capp, "Молоко", required=True, min_select=1, max_select=1)
+    await ins_mods(g_milk_capp, [("Обычное", "0.00"), ("Овсяное", "40.00")])
+
+    g_temp_capp = await ins_group(capp, "Температура", required=True, min_select=1, max_select=1)
+    await ins_mods(g_temp_capp, [("Обычная", "0.00"), ("Горячее", "0.00"), ("Тёплое", "0.00")])
+
+    # raf modifiers
+    g_size_raf = await ins_group(raf, "Размер", required=True, min_select=1, max_select=1)
+    await ins_mods(g_size_raf, [("M", "0.00"), ("L", "70.00")])
+
+    g_add_raf = await ins_group(raf, "Добавки", required=False, min_select=0, max_select=2)
+    await ins_mods(g_add_raf, [("Корица", "10.00"), ("Шоколад", "20.00"), ("Взбитые сливки", "40.00")])
+
+    # -------------------------------------------------------
+    # 2) Roast Lab
+    # -------------------------------------------------------
+    cafe2 = await ins_cafe("Roast Lab")
+    c2_coffee = await ins_cat(cafe2, "Кофе")
+    c2_alt = await ins_cat(cafe2, "Альтернатива")
+
+    americano = await ins_prod(cafe2, c2_coffee, "Американо", "190.00", "Лонг кофе")
+    flat = await ins_prod(cafe2, c2_coffee, "Флэт-уайт", "250.00", "Плотный и крепкий")
+    v60 = await ins_prod(cafe2, c2_alt, "V60", "320.00", "Фильтр воронка")
+    batch = await ins_prod(cafe2, c2_alt, "Фильтр-кофе", "240.00", "Batch brew")
+
+    # americano modifiers
+    g_size_amer = await ins_group(americano, "Размер", required=True, min_select=1, max_select=1)
+    await ins_mods(g_size_amer, [("S", "0.00"), ("M", "30.00"), ("L", "60.00")])
+
+    g_shot_amer = await ins_group(americano, "Шоты", required=False, min_select=0, max_select=2)
+    await ins_mods(g_shot_amer, [("Доп. шот", "50.00")])
+
+    # flat modifiers
+    g_milk_flat = await ins_group(flat, "Молоко", required=True, min_select=1, max_select=1)
+    await ins_mods(g_milk_flat, [("Обычное", "0.00"), ("Овсяное", "40.00")])
+
+    g_size_flat = await ins_group(flat, "Размер", required=True, min_select=1, max_select=1)
+    await ins_mods(g_size_flat, [("S", "0.00"), ("M", "40.00")])
+
+    # v60 modifiers
+    g_grind = await ins_group(v60, "Помол", required=True, min_select=1, max_select=1)
+    await ins_mods(g_grind, [("Стандарт", "0.00"), ("Поуже", "0.00"), ("Пошире", "0.00")])
+
+    g_profile = await ins_group(v60, "Профиль", required=True, min_select=1, max_select=1)
+    await ins_mods(g_profile, [("Фрукты", "0.00"), ("Шоколад", "0.00"), ("Орехи", "0.00")])
+
+    # batch modifiers
+    g_size_batch = await ins_group(batch, "Размер", required=True, min_select=1, max_select=1)
+    await ins_mods(g_size_batch, [("M", "0.00"), ("L", "50.00")])
+
+    # -------------------------------------------------------
+    # 3) Drip & Drop
+    # -------------------------------------------------------
+    cafe3 = await ins_cafe("Drip & Drop")
+    c3_coffee = await ins_cat(cafe3, "Кофе")
+    c3_special = await ins_cat(cafe3, "Спешл")
+
+    matcha = await ins_prod(cafe3, c3_special, "Матча латте", "310.00", "Японская матча")
+    iced = await ins_prod(cafe3, c3_special, "Айс латте", "260.00", "Лёд + латте")
+    cocoa = await ins_prod(cafe3, c3_special, "Какао", "240.00", "Шоколадный напиток")
+    espresso_tonic = await ins_prod(cafe3, c3_coffee, "Эспрессо-тоник", "290.00", "Освежает")
+
+    # matcha modifiers
+    g_milk_matcha = await ins_group(matcha, "Молоко", required=True, min_select=1, max_select=1)
+    await ins_mods(g_milk_matcha, [("Обычное", "0.00"), ("Кокосовое", "50.00"), ("Овсяное", "40.00")])
+
+    g_sweet_matcha = await ins_group(matcha, "Сладость", required=True, min_select=1, max_select=1)
+    await ins_mods(g_sweet_matcha, [("Без сахара", "0.00"), ("Обычно", "0.00"), ("Сладко", "0.00")])
+
+    # iced latte modifiers
+    g_milk_iced = await ins_group(iced, "Молоко", required=True, min_select=1, max_select=1)
+    await ins_mods(g_milk_iced, [("Обычное", "0.00"), ("Овсяное", "40.00")])
+
+    g_size_iced = await ins_group(iced, "Размер", required=True, min_select=1, max_select=1)
+    await ins_mods(g_size_iced, [("M", "0.00"), ("L", "60.00")])
+
+    # cocoa modifiers
+    g_add_cocoa = await ins_group(cocoa, "Добавки", required=False, min_select=0, max_select=2)
+    await ins_mods(g_add_cocoa, [("Маршмеллоу", "30.00"), ("Корица", "10.00"), ("Взбитые сливки", "40.00")])
+
+    # espresso tonic modifiers
+    g_tonic = await ins_group(espresso_tonic, "Тоник", required=True, min_select=1, max_select=1)
+    await ins_mods(g_tonic, [("Обычный", "0.00"), ("Грейпфрут", "20.00"), ("Лайм", "20.00")])
+
+    await session.commit()
 
 async def build_order_receipt(session: AsyncSession, order_id: int) -> dict:
     """
