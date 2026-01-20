@@ -40,7 +40,11 @@ class Stoplisted(ServiceError):
     pass
 
 
+
 class CartEmpty(ServiceError):
+    pass
+
+class InsufficientBalance(ServiceError):
     pass
 
 
@@ -501,7 +505,7 @@ async def get_cart_view(session: AsyncSession, settings, *, user_id: int, cafe_i
 
 
 # ----------------------------
-# Checkout / order creation
+# Checkout / order creation (balance-based)
 # ----------------------------
 
 async def _assert_cart_ready_for_checkout(session: AsyncSession, settings, *, user_id: int, cafe_id: int) -> CartView:
@@ -514,7 +518,7 @@ async def _assert_cart_ready_for_checkout(session: AsyncSession, settings, *, us
     # block if any line blocked
     blocked = [ln for ln in cart.lines if ln.blocked]
     if blocked:
-        # максимально честно: нельзя оплатить пока есть недоступное
+        # максимально честно: нельзя оформить пока есть недоступное
         raise Stoplisted("В корзине есть недоступные позиции. Удали их и попробуй снова.")
 
     if cart.total <= Decimal("0.00"):
@@ -523,17 +527,89 @@ async def _assert_cart_ready_for_checkout(session: AsyncSession, settings, *, us
     return cart
 
 
-async def _create_order_from_cart(
+async def get_balance(session: AsyncSession, user_id: int) -> Decimal:
+    """Returns user balance as Decimal("0.00")."""
+    await db.ensure_user(session, user_id)
+
+    # Prefer db helper if exists
+    if hasattr(db, "get_user_balance"):
+        bal = await db.get_user_balance(session, user_id)
+        return d2(bal)
+
+    # Fallback: direct read from users table (requires `users.balance`)
+    q = select(db.users.c.balance).where(db.users.c.id == user_id)
+    val = (await session.execute(q)).scalar_one_or_none()
+    return d2(val or 0)
+
+
+async def create_topup_request(session: AsyncSession, settings, *, user_id: int, amount: Decimal) -> int:
+    """Creates topup record in DB and returns topup_id. Payment creation happens in payments.py."""
+    await db.ensure_user(session, user_id)
+
+    amount = d2(amount)
+    if amount <= Decimal("0.00"):
+        raise Validation("Сумма должна быть больше 0.")
+
+    min_amt = d2(getattr(settings, "MIN_TOPUP_AMOUNT", Decimal("10.00")))
+    max_amt = d2(getattr(settings, "MAX_TOPUP_AMOUNT", Decimal("100000.00")))
+    if amount < min_amt:
+        raise Validation(f"Минимальная сумма пополнения: {min_amt:.2f} ₽")
+    if amount > max_amt:
+        raise Validation(f"Максимальная сумма пополнения: {max_amt:.2f} ₽")
+
+    if not hasattr(db, "create_topup"):
+        raise ServiceError("В db.py нет функции create_topup() для пополнений.")
+
+    topup_id = await db.create_topup(session, user_id=user_id, amount=float(amount))
+    return int(topup_id)
+
+
+async def _debit_balance(session: AsyncSession, user_id: int, amount: Decimal) -> None:
+    """Atomically decreases user balance."""
+    amount = d2(amount)
+
+    # Prefer db helper if exists
+    if hasattr(db, "debit_user_balance"):
+        await db.debit_user_balance(session, user_id=user_id, amount=float(amount))
+        return
+
+    if hasattr(db, "change_user_balance"):
+        await db.change_user_balance(session, user_id=user_id, delta=float(-amount))
+        return
+
+    # Fallback: direct update (requires `users.balance`)
+    now = db.utcnow() if hasattr(db, "utcnow") else None
+    upd = db.users.update().where(db.users.c.id == user_id).values(
+        balance=db.users.c.balance - float(amount),
+        updated_at=now if now is not None else db.users.c.updated_at,
+    )
+    await session.execute(upd)
+
+
+async def checkout_with_balance(
     session: AsyncSession,
     settings,
     *,
     user_id: int,
     cafe_id: int,
-    status: str,
     pickup_type: str = "asap",
     pickup_at=None,
 ) -> CheckoutResult:
+    """
+    Creates PAID order by charging user's internal balance.
+    - validates cart (stoplist/overload)
+    - checks balance >= cart.total
+    - creates order + snapshots
+    - debits balance
+    - clears cart
+    """
+
     cart = await _assert_cart_ready_for_checkout(session, settings, user_id=user_id, cafe_id=cafe_id)
+
+    balance = await get_balance(session, user_id)
+    if balance < cart.total:
+        need = d2(cart.total - balance)
+        raise InsufficientBalance(f"Недостаточно средств. Не хватает: {need:.2f} ₽")
 
     # generate unique code + insert order (retry only on code collision)
     last_err: Exception | None = None
@@ -548,7 +624,7 @@ async def _create_order_from_cart(
                 code=code_try,
                 user_id=user_id,
                 cafe_id=cafe_id,
-                status=status,
+                status="paid",
                 total=float(cart.total),
                 pickup_type=pickup_type,
                 pickup_at=pickup_at,
@@ -561,13 +637,10 @@ async def _create_order_from_cart(
 
             # ✅ Ретраим ТОЛЬКО при конфликте уникальности кода
             msg = str(e).lower()
-            is_code_collision = (
-                ("orders.code" in msg) and ("unique" in msg or "constraint" in msg)
-            )
+            is_code_collision = ("orders.code" in msg) and ("unique" in msg or "constraint" in msg)
             if is_code_collision:
                 continue
 
-            # ❌ это не конфликт кода, это реальная ошибка схемы/ограничений
             raise ServiceError(f"Ошибка базы при создании заказа: {e}") from e
 
     if order_id is None or code is None:
@@ -607,53 +680,18 @@ async def _create_order_from_cart(
                 price_delta_snapshot=float(m["price_delta"]),
             )
 
+    # debit balance (same transaction)
+    await _debit_balance(session, user_id, cart.total)
+
     # clear cart after order created
     await db.clear_cart(session, user_id, cafe_id)
 
     return CheckoutResult(
-        order_id=order_id,
-        code=code,
+        order_id=int(order_id),
+        code=str(code),
         total=cart.total,
-        status=status,
-        payment_url=None,
-    )
-
-async def checkout_test_paid(
-    session: AsyncSession,
-    settings,
-    *,
-    user_id: int,
-    cafe_id: int,
-    pickup_type: str = "asap",
-    pickup_at=None,
-) -> CheckoutResult:
-    return await _create_order_from_cart(
-        session, settings,
-        user_id=user_id,
-        cafe_id=cafe_id,
         status="paid",
-        pickup_type=pickup_type,
-        pickup_at=pickup_at,
-    )
-
-
-
-async def checkout_pending_payment(
-    session: AsyncSession,
-    settings,
-    *,
-    user_id: int,
-    cafe_id: int,
-    pickup_type: str = "asap",
-    pickup_at=None,
-) -> CheckoutResult:
-    return await _create_order_from_cart(
-        session, settings,
-        user_id=user_id,
-        cafe_id=cafe_id,
-        status="pending_payment",
-        pickup_type=pickup_type,
-        pickup_at=pickup_at,
+        payment_url=None,
     )
 
 # ----------------------------

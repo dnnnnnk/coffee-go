@@ -3,7 +3,6 @@ from __future__ import annotations
 import contextlib
 from datetime import datetime, timezone
 from typing import Iterable, Sequence
-from datetime import datetime
 
 from sqlalchemy import (
     JSON,
@@ -61,7 +60,11 @@ users = Table(
     "users",
     metadata,
     Column("id", Integer, primary_key=True),  # tg user id
+    Column("balance", Numeric(12, 2), nullable=False, server_default="0"),
     Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Index("ix_users_balance", "balance"),
+    CheckConstraint("balance >= 0", name="ck_users_balance_nonneg"),
 )
 
 cafes = Table(
@@ -241,21 +244,33 @@ order_item_modifiers = Table(
     Index("ix_order_item_mods_item", "order_item_id"),
 )
 
-payments = Table(
-    "payments",
+
+# Top-ups (balance replenishment via YooKassa)
+topups = Table(
+    "topups",
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("order_id", Integer, ForeignKey("orders.id", ondelete="CASCADE"), nullable=False),
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("amount", Numeric(12, 2), nullable=False),
+    Column("currency", String(8), nullable=False, server_default="RUB"),
+    Column(
+        "status",
+        String(32),
+        nullable=False,
+        server_default="pending",
+        doc="pending|succeeded|canceled",
+    ),
     Column("provider", String(32), nullable=False, server_default="yookassa"),
-    Column("payment_id", String(128), nullable=False),  # id from provider
-    Column("status", String(32), nullable=False),  # pending|succeeded|canceled|refunded|...
+    Column("provider_payment_id", String(128), nullable=True),
     Column("confirmation_url", Text, nullable=True),
     Column("payload_json", JSON, nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
-    UniqueConstraint("order_id", name="uq_payments_order"),
-    UniqueConstraint("provider", "payment_id", name="uq_payments_provider_payment_id"),
-    Index("ix_payments_status", "status"),
+    Column("succeeded_at", DateTime(timezone=True), nullable=True),
+    Index("ix_topups_user", "user_id"),
+    Index("ix_topups_status", "status"),
+    UniqueConstraint("provider", "provider_payment_id", name="uq_topups_provider_payment_id"),
+    CheckConstraint("amount > 0", name="ck_topups_amount_pos"),
 )
 
 
@@ -362,6 +377,25 @@ async def init_db(settings) -> None:
 
         if "pickup_at" not in cols:
             await conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN pickup_at DATETIME NULL;")
+
+        # --- users balance columns ---
+        res_u = await conn.exec_driver_sql("PRAGMA table_info(users);")
+        ucols = {row[1] for row in res_u.fetchall()}
+        if "balance" not in ucols:
+            await conn.exec_driver_sql(
+                "ALTER TABLE users ADD COLUMN balance NUMERIC NOT NULL DEFAULT 0;"
+            )
+        if "updated_at" not in ucols:
+            await conn.exec_driver_sql(
+                "ALTER TABLE users ADD COLUMN updated_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP);"
+            )
+
+        # --- orders updated_at column (safety for older dbs) ---
+        if "updated_at" not in cols:
+            await conn.exec_driver_sql(
+                "ALTER TABLE orders ADD COLUMN updated_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP);"
+            )
+
         # ensure schema_meta row
         res = await conn.execute(select(schema_meta.c.version).where(schema_meta.c.id == 1))
         row = res.first()
@@ -390,7 +424,10 @@ async def init_db(settings) -> None:
 async def ensure_user(session: AsyncSession, user_id: int) -> None:
     res = await session.execute(select(users.c.id).where(users.c.id == user_id))
     if res.first() is None:
-        await session.execute(insert(users).values(id=user_id, created_at=utcnow()))
+        now = utcnow()
+        await session.execute(
+            insert(users).values(id=user_id, balance=0, created_at=now, updated_at=now)
+        )
 
 
 def normalize_modifiers_key(modifier_ids: Iterable[int] | None) -> str:
@@ -652,13 +689,46 @@ async def clear_cart(session: AsyncSession, user_id: int, cafe_id: int) -> int:
 
 
 # ----------------------------
-# Orders / payments
+# Orders / balance / topups
 # ----------------------------
 async def count_active_orders(session: AsyncSession, cafe_id: int, active_statuses: set[str]) -> int:
     q = select(func.count()).select_from(orders).where(
         and_(orders.c.cafe_id == cafe_id, orders.c.status.in_(list(active_statuses)))
     )
     return int((await session.execute(q)).scalar_one())
+
+
+
+async def get_balance(session: AsyncSession, user_id: int) -> float:
+    q = select(users.c.balance).where(users.c.id == user_id)
+    val = (await session.execute(q)).scalar_one_or_none()
+    return float(val or 0)
+
+
+async def add_balance(session: AsyncSession, user_id: int, amount: float) -> None:
+    if amount <= 0:
+        raise ValueError("amount must be > 0")
+    now = utcnow()
+    q = (
+        update(users)
+        .where(users.c.id == user_id)
+        .values(balance=users.c.balance + amount, updated_at=now)
+    )
+    await session.execute(q)
+
+
+async def subtract_balance_atomic(session: AsyncSession, user_id: int, amount: float) -> bool:
+    """Atomic balance decrement. Returns True if debited, False if insufficient."""
+    if amount <= 0:
+        raise ValueError("amount must be > 0")
+    now = utcnow()
+    q = (
+        update(users)
+        .where(and_(users.c.id == user_id, users.c.balance >= amount))
+        .values(balance=users.c.balance - amount, updated_at=now)
+    )
+    res = await session.execute(q)
+    return bool(res.rowcount and res.rowcount > 0)
 
 
 
@@ -693,6 +763,75 @@ async def create_order(
     )
     row = (await session.execute(q)).scalar_one()
     return int(row)
+
+
+async def create_topup(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    amount: float,
+    currency: str = "RUB",
+) -> int:
+    if amount <= 0:
+        raise ValueError("amount must be > 0")
+    now = utcnow()
+    q = (
+        insert(topups)
+        .values(
+            user_id=user_id,
+            amount=amount,
+            currency=currency,
+            status="pending",
+            provider="yookassa",
+            created_at=now,
+            updated_at=now,
+        )
+        .returning(topups.c.id)
+    )
+    return int((await session.execute(q)).scalar_one())
+
+
+async def get_topup(session: AsyncSession, topup_id: int, *, user_id: int | None = None) -> dict | None:
+    cond = [topups.c.id == topup_id]
+    if user_id is not None:
+        cond.append(topups.c.user_id == int(user_id))
+    q = select(topups).where(and_(*cond))
+    row = (await session.execute(q)).mappings().first()
+    return dict(row) if row else None
+
+
+async def set_topup_provider_payment(
+    session: AsyncSession,
+    *,
+    topup_id: int,
+    provider_payment_id: str,
+    confirmation_url: str | None,
+    status: str,
+    payload_json: dict | None,
+) -> None:
+    now = utcnow()
+    q = (
+        update(topups)
+        .where(topups.c.id == topup_id)
+        .values(
+            provider_payment_id=provider_payment_id,
+            confirmation_url=confirmation_url,
+            status=status,
+            payload_json=payload_json,
+            updated_at=now,
+        )
+    )
+    await session.execute(q)
+
+
+async def set_topup_status(session: AsyncSession, topup_id: int, status: str) -> bool:
+    now = utcnow()
+    values = {"status": status, "updated_at": now}
+    if status == "succeeded":
+        values["succeeded_at"] = now
+    q = update(topups).where(topups.c.id == topup_id).values(**values)
+    res = await session.execute(q)
+    return bool(res.rowcount and res.rowcount > 0)
 
 
 async def add_order_item(
@@ -756,52 +895,6 @@ async def set_order_status(session: AsyncSession, order_id: int, status: str) ->
     return res.rowcount > 0
 
 
-async def upsert_payment(
-    session: AsyncSession,
-    *,
-    order_id: int,
-    provider: str,
-    payment_id: str,
-    status: str,
-    confirmation_url: str | None,
-    payload_json: dict | None,
-) -> None:
-    now = utcnow()
-    # try update first
-    upd = (
-        update(payments)
-        .where(payments.c.order_id == order_id)
-        .values(
-            provider=provider,
-            payment_id=payment_id,
-            status=status,
-            confirmation_url=confirmation_url,
-            payload_json=payload_json,
-            updated_at=now,
-        )
-    )
-    res = await session.execute(upd)
-    if res.rowcount and res.rowcount > 0:
-        return
-
-    await session.execute(
-        insert(payments).values(
-            order_id=order_id,
-            provider=provider,
-            payment_id=payment_id,
-            status=status,
-            confirmation_url=confirmation_url,
-            payload_json=payload_json,
-            created_at=now,
-            updated_at=now,
-        )
-    )
-
-
-async def get_payment_by_order(session: AsyncSession, order_id: int) -> dict | None:
-    q = select(payments).where(payments.c.order_id == order_id)
-    row = (await session.execute(q)).mappings().first()
-    return dict(row) if row else None
 
 
 # ----------------------------

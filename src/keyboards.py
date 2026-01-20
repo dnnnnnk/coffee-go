@@ -1,6 +1,5 @@
 # src/keyboards.py
 from __future__ import annotations
-from .models import PayCheckCB
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable
 from .models import PickupASAPCB, PickupTimeCB
@@ -49,6 +48,7 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="☕ Кофейни", callback_data="open:cafes")
     b.button(text="🧺 Корзина", callback_data="open:cart")     # cafe_id берём из FSM/последнего выбора
+    b.button(text="💰 Баланс", callback_data="open:balance")
     b.button(text="👤 Профиль", callback_data=ProfileCB().pack())
     b.adjust(1)
     return b.as_markup()
@@ -64,6 +64,30 @@ def pickup_choice_kb(cafe_id: int) -> InlineKeyboardMarkup:
 def back_to_main_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="⬅️ В меню", callback_data="open:main")
+    return b.as_markup()
+
+
+# ----------------------------
+# Balance / Topup
+# ----------------------------
+
+def balance_kb() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="➕ Пополнить", callback_data="balance:topup")
+    b.button(text="⬅️ Назад", callback_data="open:main")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def topup_pay_kb(*, topup_id: int, pay_url: str | None) -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+
+    if pay_url:
+        b.button(text="🔗 Перейти к оплате", url=pay_url)
+
+    b.button(text="✅ Я оплатил", callback_data=f"topup:check:{topup_id}")
+    b.button(text="⬅️ Назад", callback_data="open:balance")
+    b.adjust(1)
     return b.as_markup()
 
 
@@ -137,26 +161,13 @@ def product_kb(cafe_id: int, product_id: int, *, has_modifiers: bool) -> InlineK
 
     if has_modifiers:
         # переход в режим выбора модификаторов (FSM заведём в handlers)
-        b.button(text="⚙️ Выбрать модификаторы", callback_data=f"open:mods:{cafe_id}:{product_id}")
+        b.button(text="Продолжить✅", callback_data=f"open:mods:{cafe_id}:{product_id}")
     else:
         # сразу добавить (без модификаторов)
         b.button(text="➕ В корзину", callback_data=f"add:{cafe_id}:{product_id}")
 
     b.button(text="🧺 Корзина", callback_data=CartOpenCB(cafe_id=cafe_id).pack())
     b.button(text="⬅️ Назад", callback_data=f"open:products:{cafe_id}")
-    b.adjust(1)
-    return b.as_markup()
-
-
-def payment_pending_kb(*, cafe_id: int, order_id: int, pay_url: str | None) -> InlineKeyboardMarkup:
-    b = InlineKeyboardBuilder()
-
-    if pay_url:
-        b.button(text="🔗 Перейти к оплате", url=pay_url)
-
-    b.button(text="✅ Я оплатил", callback_data=PayCheckCB(cafe_id=cafe_id, order_id=order_id).pack())
-    b.button(text="🧺 Корзина", callback_data=CartOpenCB(cafe_id=cafe_id).pack())
-    b.button(text="⬅️ Каталог", callback_data=f"open:categories:{cafe_id}")
     b.adjust(1)
     return b.as_markup()
 
@@ -221,7 +232,7 @@ def modifiers_kb(
         b.adjust(1)
 
     # действия
-    b.button(text="✅ Готово", callback_data=ModsDoneCB(cafe_id=cafe_id, product_id=product_id).pack())
+    b.button(text="Продолжить✅", callback_data=ModsDoneCB(cafe_id=cafe_id, product_id=product_id).pack())
     b.button(text="🧺 Корзина", callback_data=CartOpenCB(cafe_id=cafe_id).pack())
     b.button(text="⬅️ К товару", callback_data=ProductCB(cafe_id=cafe_id, product_id=product_id).pack())
     b.adjust(1)

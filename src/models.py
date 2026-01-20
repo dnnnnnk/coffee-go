@@ -22,6 +22,7 @@ class UserFlow(StatesGroup):
     choosing_modifiers = State()
     choosing_pickup = State()
     waiting_pickup_time = State()
+    waiting_topup_amount = State()
 
 
 # ----------------------------
@@ -33,10 +34,6 @@ class PickupASAPCB(CallbackData, prefix="pasap"):
 
 class PickupTimeCB(CallbackData, prefix="ptime"):
     cafe_id: int
-
-class PayCheckCB(CallbackData, prefix="pchk"):
-    cafe_id: int
-    order_id: int
 
 class NavCB(CallbackData, prefix="nav"):
     page: int
@@ -107,7 +104,6 @@ class ProfileCB(CallbackData, prefix="me"):
 
 OrderStatus = Literal[
     "created",
-    "pending_payment",
     "paid",
     "accepted",
     "in_progress",
