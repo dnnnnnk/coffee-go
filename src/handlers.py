@@ -10,7 +10,9 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from .keyboards import pickup_choice_kb
 from datetime import datetime, timedelta
+from sqlalchemy import select
 from . import services
+from . import db
 from . import payments
 from .config import get_settings
 from .db import session_scope
@@ -295,11 +297,43 @@ async def open_cafes(q: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data == "open:cart")
 async def open_cart_from_menu(q: CallbackQuery, state: FSMContext) -> None:
     await q.answer()
+
+    # 1) если пользователь уже выбрал кофейню — пробуем показать корзину этой кофейни
     cafe_id = await _get_selected_cafe_id(state)
-    if not cafe_id:
+    if cafe_id:
+        try:
+            await _show_cart(q, state, cafe_id)
+            return
+        except services.Validation:
+            # корзина реально привязана к другой кофейне — попробуем определить к какой
+            pass
+        except services.ServiceError as e:
+            await safe_edit(q, e.message, reply_markup=back_to_main_kb())
+            return
+
+    # 2) если кофейня не выбрана или корзина привязана к другой кофейне —
+    # пытаемся найти cafe_id по реально лежащим в корзине позициям
+    async with session_scope(settings) as s:
+        cart_cafe_id = (
+            await s.execute(
+                select(db.cart_items.c.cafe_id)
+                .where(db.cart_items.c.user_id == q.from_user.id)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+    if cart_cafe_id is None:
+        # корзина пустая и кофейня не выбрана — просто отправим в выбор кофеен
         await safe_edit(q, "Сначала выбери кофейню.", reply_markup=back_to_main_kb())
         return
-    await _show_cart(q, state, cafe_id)
+
+    cafe_id = int(cart_cafe_id)
+    await _set_selected_cafe_id(state, cafe_id)
+
+    try:
+        await _show_cart(q, state, cafe_id)
+    except services.ServiceError as e:
+        await safe_edit(q, e.message, reply_markup=back_to_main_kb())
 
 
 # ----------------------------
@@ -447,7 +481,26 @@ async def on_product_open(q: CallbackQuery, callback_data: ProductCB, state: FSM
 async def on_cart_open(q: CallbackQuery, callback_data: CartOpenCB, state: FSMContext) -> None:
     await q.answer()
     try:
+        await _set_selected_cafe_id(state, int(callback_data.cafe_id))
         await _show_cart(q, state, callback_data.cafe_id)
+    except services.Validation:
+        # если корзина привязана к другой кофейне — перекинем на реальную кофейню корзины
+        async with session_scope(settings) as s:
+            cart_cafe_id = (
+                await s.execute(
+                    select(db.cart_items.c.cafe_id)
+                    .where(db.cart_items.c.user_id == q.from_user.id)
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+
+        if cart_cafe_id is None:
+            await safe_edit(q, "🧺 Корзина пустая.", reply_markup=back_to_main_kb())
+            return
+
+        real_cafe_id = int(cart_cafe_id)
+        await _set_selected_cafe_id(state, real_cafe_id)
+        await _show_cart(q, state, real_cafe_id)
     except services.ServiceError as e:
         await safe_edit(q, e.message, reply_markup=back_to_main_kb())
 

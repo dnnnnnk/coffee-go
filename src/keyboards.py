@@ -47,7 +47,7 @@ def _cut(text: str, n: int = 40) -> str:
 def main_menu_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="☕ Кофейни", callback_data="open:cafes")
-    b.button(text="🧺 Корзина", callback_data="open:cart")     # cafe_id берём из FSM/последнего выбора
+    b.button(text="🧺 Корзина", callback_data=CartOpenCB(cafe_id=0).pack())  # открыть корзину любой кофейни
     b.button(text="💰 Баланс", callback_data="open:balance")
     b.button(text="👤 Профиль", callback_data=ProfileCB().pack())
     b.adjust(1)

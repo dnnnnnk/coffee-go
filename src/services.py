@@ -1,13 +1,11 @@
 # src/services.py
 from __future__ import annotations
-from sqlalchemy import select
+
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Iterable
-from decimal import Decimal
-from sqlalchemy.exc import IntegrityError
+from typing import Any
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -732,17 +730,24 @@ async def seed_minimal_demo_data(session: AsyncSession) -> None:
             )).scalar_one()
         )
 
-    async def ins_cat(cafe_id: int, name: str) -> int:
+    async def ins_cat(cafe_id: int, name: str, sort: int = 0) -> int:
+        values: dict[str, Any] = {
+            "cafe_id": cafe_id,
+            "name": name,
+            "is_active": True,
+            "created_at": now,
+            "updated_at": now,
+        }
+        # optional column
+        if "sort" in db.categories.c:
+            values["sort"] = int(sort)
+
         return int(
-            (await session.execute(
-                db.categories.insert().values(
-                    cafe_id=cafe_id,
-                    name=name,
-                    is_active=True,
-                    created_at=now,
-                    updated_at=now,
-                ).returning(db.categories.c.id)
-            )).scalar_one()
+            (
+                await session.execute(
+                    db.categories.insert().values(**values).returning(db.categories.c.id)
+                )
+            ).scalar_one()
         )
 
     async def ins_prod(
@@ -751,20 +756,28 @@ async def seed_minimal_demo_data(session: AsyncSession) -> None:
         name: str,
         base_price: str,
         description: str | None = None,
+        sort: int = 0,
     ) -> int:
+        values: dict[str, Any] = {
+            "cafe_id": cafe_id,
+            "category_id": category_id,
+            "name": name,
+            "description": description,
+            "base_price": Decimal(base_price),
+            "is_active": True,
+            "created_at": now,
+            "updated_at": now,
+        }
+        # optional column
+        if "sort" in db.products.c:
+            values["sort"] = int(sort)
+
         return int(
-            (await session.execute(
-                db.products.insert().values(
-                    cafe_id=cafe_id,
-                    category_id=category_id,
-                    name=name,
-                    description=description,
-                    base_price=Decimal(base_price),
-                    is_active=True,
-                    created_at=now,
-                    updated_at=now,
-                ).returning(db.products.c.id)
-            )).scalar_one()
+            (
+                await session.execute(
+                    db.products.insert().values(**values).returning(db.products.c.id)
+                )
+            ).scalar_one()
         )
 
     async def ins_group(
@@ -774,43 +787,54 @@ async def seed_minimal_demo_data(session: AsyncSession) -> None:
         required: bool,
         min_select: int,
         max_select: int,
+        sort: int = 0,
     ) -> int:
+        values: dict[str, Any] = {
+            "product_id": product_id,
+            "name": name,
+            "required": required,
+            "min_select": min_select,
+            "max_select": max_select,
+            "is_active": True,
+            "created_at": now,
+            "updated_at": now,
+        }
+        # optional column
+        if "sort" in db.modifier_groups.c:
+            values["sort"] = int(sort)
+
         return int(
-            (await session.execute(
-                db.modifier_groups.insert().values(
-                    product_id=product_id,
-                    name=name,
-                    required=required,
-                    min_select=min_select,
-                    max_select=max_select,
-                    is_active=True,
-                    created_at=now,
-                    updated_at=now,
-                ).returning(db.modifier_groups.c.id)
-            )).scalar_one()
+            (
+                await session.execute(
+                    db.modifier_groups.insert().values(**values).returning(db.modifier_groups.c.id)
+                )
+            ).scalar_one()
         )
 
     async def ins_mods(group_id: int, mods: list[tuple[str, str]]) -> None:
-        payload = []
-        for (n, d) in mods:
-            payload.append(
-                dict(
-                    group_id=group_id,
-                    name=n,
-                    price_delta=Decimal(d),
-                    is_active=True,
-                    created_at=now,
-                    updated_at=now,
-                )
-            )
+        payload: list[dict[str, Any]] = []
+        for idx, (n, d) in enumerate(mods):
+            row: dict[str, Any] = {
+                "group_id": group_id,
+                "name": n,
+                "price_delta": Decimal(d),
+                "is_active": True,
+                "created_at": now,
+                "updated_at": now,
+            }
+            # optional column
+            if "sort" in db.modifiers.c:
+                row["sort"] = idx
+            payload.append(row)
+
         await session.execute(db.modifiers.insert(), payload)
 
     # -------------------------------------------------------
     # 1) Кофейня у дома
     # -------------------------------------------------------
     cafe1 = await ins_cafe("Кофейня у дома")
-    c1_coffee = await ins_cat(cafe1, "Кофе")
-    c1_food = await ins_cat(cafe1, "Еда")
+    c1_coffee = await ins_cat(cafe1, "Кофе", sort=0)
+    c1_food = await ins_cat(cafe1, "Еда", sort=1)
 
     espresso = await ins_prod(cafe1, c1_coffee, "Эспрессо", "160.00", "Крепко и быстро")
     capp = await ins_prod(cafe1, c1_coffee, "Капучино", "210.00", "Классика на каждый день")
@@ -848,8 +872,8 @@ async def seed_minimal_demo_data(session: AsyncSession) -> None:
     # 2) Roast Lab
     # -------------------------------------------------------
     cafe2 = await ins_cafe("Roast Lab")
-    c2_coffee = await ins_cat(cafe2, "Кофе")
-    c2_alt = await ins_cat(cafe2, "Альтернатива")
+    c2_coffee = await ins_cat(cafe2, "Кофе", sort=0)
+    c2_alt = await ins_cat(cafe2, "Альтернатива", sort=1)
 
     americano = await ins_prod(cafe2, c2_coffee, "Американо", "190.00", "Лонг кофе")
     flat = await ins_prod(cafe2, c2_coffee, "Флэт-уайт", "250.00", "Плотный и крепкий")
@@ -885,8 +909,8 @@ async def seed_minimal_demo_data(session: AsyncSession) -> None:
     # 3) Drip & Drop
     # -------------------------------------------------------
     cafe3 = await ins_cafe("Drip & Drop")
-    c3_coffee = await ins_cat(cafe3, "Кофе")
-    c3_special = await ins_cat(cafe3, "Спешл")
+    c3_coffee = await ins_cat(cafe3, "Кофе", sort=0)
+    c3_special = await ins_cat(cafe3, "Спешл", sort=1)
 
     matcha = await ins_prod(cafe3, c3_special, "Матча латте", "310.00", "Японская матча")
     iced = await ins_prod(cafe3, c3_special, "Айс латте", "260.00", "Лёд + латте")

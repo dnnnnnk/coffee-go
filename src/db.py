@@ -102,11 +102,13 @@ products = Table(
     Column("name", String(128), nullable=False),
     Column("description", Text, nullable=True),
     Column("base_price", Numeric(10, 2), nullable=False),
+    Column("sort", Integer, nullable=False, server_default="0"),
     Column("is_active", Boolean, nullable=False, server_default="1"),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     UniqueConstraint("cafe_id", "name", name="uq_products_cafe_name"),
     Index("ix_products_cafe", "cafe_id"),
+    Index("ix_products_sort", "sort"),
     Index("ix_products_category", "category_id"),
     CheckConstraint("base_price >= 0", name="ck_products_base_price_nonneg"),
 )
@@ -370,7 +372,10 @@ async def init_db(settings) -> None:
         cols = {row[1] for row in res.fetchall()}  # row[1] = name
         if "created_at" not in cols:
             await conn.exec_driver_sql(
-                "ALTER TABLE orders ADD COLUMN created_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP);"
+                "ALTER TABLE orders ADD COLUMN created_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00';"
+            )
+            await conn.exec_driver_sql(
+                "UPDATE orders SET created_at = CURRENT_TIMESTAMP WHERE created_at = '1970-01-01 00:00:00';"
             )
         if "pickup_type" not in cols:
             await conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN pickup_type TEXT NOT NULL DEFAULT 'asap';")
@@ -387,14 +392,26 @@ async def init_db(settings) -> None:
             )
         if "updated_at" not in ucols:
             await conn.exec_driver_sql(
-                "ALTER TABLE users ADD COLUMN updated_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP);"
+                "ALTER TABLE users ADD COLUMN updated_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00';"
+            )
+            await conn.exec_driver_sql(
+                "UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE updated_at = '1970-01-01 00:00:00';"
             )
 
         # --- orders updated_at column (safety for older dbs) ---
         if "updated_at" not in cols:
             await conn.exec_driver_sql(
-                "ALTER TABLE orders ADD COLUMN updated_at DATETIME NOT NULL DEFAULT (CURRENT_TIMESTAMP);"
+                "ALTER TABLE orders ADD COLUMN updated_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00';"
             )
+            await conn.exec_driver_sql(
+                "UPDATE orders SET updated_at = CURRENT_TIMESTAMP WHERE updated_at = '1970-01-01 00:00:00';"
+            )
+
+        # --- products sort column (for menu ordering) ---
+        res_p = await conn.exec_driver_sql("PRAGMA table_info(products);")
+        pcols = {row[1] for row in res_p.fetchall()}
+        if "sort" not in pcols:
+            await conn.exec_driver_sql("ALTER TABLE products ADD COLUMN sort INTEGER NOT NULL DEFAULT 0;")
 
         # ensure schema_meta row
         res = await conn.execute(select(schema_meta.c.version).where(schema_meta.c.id == 1))
