@@ -174,9 +174,7 @@ class Settings(BaseSettings):
 
             # Webhooks strongly recommended if payments enabled
             if not self.WEBHOOKS_ENABLED:
-                # Не запрещаем, но это почти гарантированный баг “оплата прошла, бот не узнал”
-                # Поэтому делаем жёстко: включил оплату — включи вебхуки.
-                raise ValueError("PAYMENTS_ENABLED=1 requires WEBHOOKS_ENABLED=1 (to receive YooKassa notifications)")
+               pass
 
         # Webhooks requirements
         if self.WEBHOOKS_ENABLED:
