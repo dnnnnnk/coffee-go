@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from passlib.hash import bcrypt
 from . import db
 
 
@@ -1142,15 +1142,20 @@ async def seed_minimal_demo_data(session: AsyncSession) -> None:
     if int(exists) > 0:
         return
 
-    async def ins_cafe(name: str, *, active=True, overloaded=False) -> int:
+    async def ins_cafe(name: str, login: str, password: str, admin_password: str = "admin") -> int:
+        now = db.utcnow()
         return int(
             (await session.execute(
                 db.cafes.insert().values(
                     name=name,
-                    is_active=active,
-                    is_overloaded=overloaded,
+                    is_active=True,
+                    is_overloaded=False,
                     created_at=now,
                     updated_at=now,
+
+                    web_login=login,
+                    web_password_hash=bcrypt.hash(password),
+                    admin_password_hash=bcrypt.hash(admin_password),
                 ).returning(db.cafes.c.id)
             )).scalar_one()
         )
@@ -1257,7 +1262,7 @@ async def seed_minimal_demo_data(session: AsyncSession) -> None:
     # -------------------------------------------------------
     # 1) Кофейня у дома
     # -------------------------------------------------------
-    cafe1 = await ins_cafe("Кофейня у дома")
+    cafe1 = await ins_cafe("Кофейня у дома", login="cafe1", password="1234", admin_password="admin1")
     c1_coffee = await ins_cat(cafe1, "Кофе", sort=0)
     c1_food = await ins_cat(cafe1, "Еда", sort=1)
 
@@ -1296,7 +1301,7 @@ async def seed_minimal_demo_data(session: AsyncSession) -> None:
     # -------------------------------------------------------
     # 2) Roast Lab
     # -------------------------------------------------------
-    cafe2 = await ins_cafe("Roast Lab")
+    cafe2 = await ins_cafe("Roast Lab", login="cafe2", password="1234", admin_password="admin2")
     c2_coffee = await ins_cat(cafe2, "Кофе", sort=0)
     c2_alt = await ins_cat(cafe2, "Альтернатива", sort=1)
 
@@ -1333,7 +1338,7 @@ async def seed_minimal_demo_data(session: AsyncSession) -> None:
     # -------------------------------------------------------
     # 3) Drip & Drop
     # -------------------------------------------------------
-    cafe3 = await ins_cafe("Drip & Drop")
+    cafe3 = await ins_cafe("Drip & Drop", login="cafe3", password="1234", admin_password="admin3")
     c3_coffee = await ins_cat(cafe3, "Кофе", sort=0)
     c3_special = await ins_cat(cafe3, "Спешл", sort=1)
 

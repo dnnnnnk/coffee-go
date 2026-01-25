@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.responses import Response
 
 from ..config import get_settings
-from .. import services
+from .. import services, db
 from .auth import (
     admin_required,
     clear_session,
@@ -61,7 +61,7 @@ async def login_post(
 ) -> Response:
     settings = get_settings()
 
-    async with services.session_scope(settings) as s:
+    async with db.session_scope(settings) as s:
         cafe_id = await services.web_auth_login(s, login=login, password=password)
 
     if cafe_id is None:
@@ -94,7 +94,7 @@ async def dashboard_get(
     # optional lightweight stats (can be extended later)
     stats: dict[str, Any] = {}
     try:
-        async with services.session_scope(settings) as s:
+        async with db.session_scope(settings) as s:
             stats = await services.web_dashboard_stats(s, cafe_id=cafe_id)
     except Exception:
         # do not break dashboard if stats fail
@@ -120,7 +120,7 @@ async def orders_get(
 ) -> HTMLResponse:
     settings = get_settings()
 
-    async with services.session_scope(settings) as s:
+    async with db.session_scope(settings) as s:
         orders = await services.web_list_orders(s, cafe_id=cafe_id, status_filter=status)
 
     return _templates(request).TemplateResponse(
@@ -144,7 +144,7 @@ async def orders_status_post(
 ) -> RedirectResponse:
     settings = get_settings()
 
-    async with services.session_scope(settings) as s:
+    async with db.session_scope(settings) as s:
         await services.web_update_order_status(
             s,
             cafe_id=cafe_id,
@@ -162,7 +162,7 @@ async def stoplist_get(
 ) -> HTMLResponse:
     settings = get_settings()
 
-    async with services.session_scope(settings) as s:
+    async with db.session_scope(settings) as s:
         data = await services.web_get_stoplist(s, cafe_id=cafe_id)
 
     return _templates(request).TemplateResponse(
@@ -191,7 +191,7 @@ async def stoplist_post(
     """
     settings = get_settings()
 
-    async with services.session_scope(settings) as s:
+    async with db.session_scope(settings) as s:
         if kind == "product":
             if product_id is None:
                 return _redirect("/stoplist")
@@ -215,7 +215,7 @@ async def admin_unlock_get(
 
     stats: dict[str, Any] = {}
     try:
-        async with services.session_scope(settings) as s:
+        async with db.session_scope(settings) as s:
             stats = await services.web_dashboard_stats(s, cafe_id=cafe_id)
     except Exception:
         stats = {}
@@ -241,7 +241,7 @@ async def admin_unlock_post(
 ) -> Response:
     settings = get_settings()
 
-    async with services.session_scope(settings) as s:
+    async with db.session_scope(settings) as s:
         ok = await services.web_admin_unlock(s, cafe_id=cafe_id, admin_password=admin_password)
 
     if ok:
@@ -251,7 +251,7 @@ async def admin_unlock_post(
     # show dashboard with error
     stats: dict[str, Any] = {}
     try:
-        async with services.session_scope(settings) as s:
+        async with db.session_scope(settings) as s:
             stats = await services.web_dashboard_stats(s, cafe_id=cafe_id)
     except Exception:
         stats = {}
@@ -277,7 +277,7 @@ async def menu_get(
 ) -> HTMLResponse:
     settings = get_settings()
 
-    async with services.session_scope(settings) as s:
+    async with db.session_scope(settings) as s:
         menu = await services.web_menu_read(s, cafe_id=cafe_id)
 
     return _templates(request).TemplateResponse(
