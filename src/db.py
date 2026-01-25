@@ -30,6 +30,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 
 # ----------------------------
@@ -210,7 +211,7 @@ orders = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("paid_at", DateTime(timezone=True), nullable=True),
-    Column("pickup_type", String(16), nullable=False, default="asap"),  # asap | time
+    Column("pickup_type", String(16), nullable=False, server_default="asap"),  # asap | time
     Column("pickup_at", DateTime(timezone=False), nullable=True),
     Index("ix_orders_user", "user_id"),
     Index("ix_orders_cafe", "cafe_id"),
@@ -307,18 +308,32 @@ def create_engine_and_sessionmaker(settings) -> tuple[AsyncEngine, async_session
       - db_url
       - DB_ECHO_SQL, DB_WAL, DB_TIMEOUT_SEC, DB_FOREIGN_KEYS
     """
-    engine = create_async_engine(
-        settings.db_url,
-        echo=bool(settings.DB_ECHO_SQL),
-        pool_size=int(getattr(settings, "DB_POOL_SIZE", 5)),
-        future=True,
-    )
-    _apply_sqlite_pragmas(
-        engine.sync_engine,
-        wal=bool(settings.DB_WAL),
-        timeout_sec=int(settings.DB_TIMEOUT_SEC),
-        foreign_keys=bool(settings.DB_FOREIGN_KEYS),
-    )
+    db_url = str(settings.db_url)
+    is_sqlite = db_url.startswith("sqlite")
+
+    engine_kwargs: dict = {
+        "echo": bool(settings.DB_ECHO_SQL),
+        "future": True,
+    }
+
+    # SQLite: no real pooling, and apply pragmas (WAL/timeout/fk)
+    if is_sqlite:
+        engine_kwargs["poolclass"] = NullPool
+    else:
+        # Postgres/MySQL etc
+        engine_kwargs["pool_size"] = int(getattr(settings, "DB_POOL_SIZE", 5))
+        engine_kwargs["pool_pre_ping"] = True
+
+    engine = create_async_engine(settings.db_url, **engine_kwargs)
+
+    if is_sqlite:
+        _apply_sqlite_pragmas(
+            engine.sync_engine,
+            wal=bool(settings.DB_WAL),
+            timeout_sec=int(settings.DB_TIMEOUT_SEC),
+            foreign_keys=bool(settings.DB_FOREIGN_KEYS),
+        )
+
     sm = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     return engine, sm
 
@@ -367,51 +382,52 @@ async def init_db(settings) -> None:
     engine = get_engine(settings)
     async with engine.begin() as conn:
         await conn.run_sync(metadata.create_all)
-        # --- lightweight migrations for SQLite (add columns if missing) ---
-        res = await conn.exec_driver_sql("PRAGMA table_info(orders);")
-        cols = {row[1] for row in res.fetchall()}  # row[1] = name
-        if "created_at" not in cols:
-            await conn.exec_driver_sql(
-                "ALTER TABLE orders ADD COLUMN created_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00';"
-            )
-            await conn.exec_driver_sql(
-                "UPDATE orders SET created_at = CURRENT_TIMESTAMP WHERE created_at = '1970-01-01 00:00:00';"
-            )
-        if "pickup_type" not in cols:
-            await conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN pickup_type TEXT NOT NULL DEFAULT 'asap';")
+        # --- lightweight migrations for SQLite only (older dev dbs) ---
+        if conn.dialect.name == "sqlite":
+            res = await conn.exec_driver_sql("PRAGMA table_info(orders);")
+            cols = {row[1] for row in res.fetchall()}  # row[1] = name
+            if "created_at" not in cols:
+                await conn.exec_driver_sql(
+                    "ALTER TABLE orders ADD COLUMN created_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00';"
+                )
+                await conn.exec_driver_sql(
+                    "UPDATE orders SET created_at = CURRENT_TIMESTAMP WHERE created_at = '1970-01-01 00:00:00';"
+                )
+            if "pickup_type" not in cols:
+                await conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN pickup_type TEXT NOT NULL DEFAULT 'asap';")
 
-        if "pickup_at" not in cols:
-            await conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN pickup_at DATETIME NULL;")
+            if "pickup_at" not in cols:
+                await conn.exec_driver_sql("ALTER TABLE orders ADD COLUMN pickup_at DATETIME NULL;")
 
-        # --- users balance columns ---
-        res_u = await conn.exec_driver_sql("PRAGMA table_info(users);")
-        ucols = {row[1] for row in res_u.fetchall()}
-        if "balance" not in ucols:
-            await conn.exec_driver_sql(
-                "ALTER TABLE users ADD COLUMN balance NUMERIC NOT NULL DEFAULT 0;"
-            )
-        if "updated_at" not in ucols:
-            await conn.exec_driver_sql(
-                "ALTER TABLE users ADD COLUMN updated_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00';"
-            )
-            await conn.exec_driver_sql(
-                "UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE updated_at = '1970-01-01 00:00:00';"
-            )
+            # --- users balance columns ---
+            res_u = await conn.exec_driver_sql("PRAGMA table_info(users);")
+            ucols = {row[1] for row in res_u.fetchall()}
+            if "balance" not in ucols:
+                await conn.exec_driver_sql(
+                    "ALTER TABLE users ADD COLUMN balance NUMERIC NOT NULL DEFAULT 0;"
+                )
+            if "updated_at" not in ucols:
+                await conn.exec_driver_sql(
+                    "ALTER TABLE users ADD COLUMN updated_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00';"
+                )
+                await conn.exec_driver_sql(
+                    "UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE updated_at = '1970-01-01 00:00:00';"
+                )
 
-        # --- orders updated_at column (safety for older dbs) ---
-        if "updated_at" not in cols:
-            await conn.exec_driver_sql(
-                "ALTER TABLE orders ADD COLUMN updated_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00';"
-            )
-            await conn.exec_driver_sql(
-                "UPDATE orders SET updated_at = CURRENT_TIMESTAMP WHERE updated_at = '1970-01-01 00:00:00';"
-            )
+            # --- orders updated_at column (safety for older dbs) ---
+            if "updated_at" not in cols:
+                await conn.exec_driver_sql(
+                    "ALTER TABLE orders ADD COLUMN updated_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00';"
+                )
+                await conn.exec_driver_sql(
+                    "UPDATE orders SET updated_at = CURRENT_TIMESTAMP WHERE updated_at = '1970-01-01 00:00:00';"
+                )
 
-        # --- products sort column (for menu ordering) ---
-        res_p = await conn.exec_driver_sql("PRAGMA table_info(products);")
-        pcols = {row[1] for row in res_p.fetchall()}
-        if "sort" not in pcols:
-            await conn.exec_driver_sql("ALTER TABLE products ADD COLUMN sort INTEGER NOT NULL DEFAULT 0;")
+            # --- products sort column (for menu ordering) ---
+            res_p = await conn.exec_driver_sql("PRAGMA table_info(products);")
+            pcols = {row[1] for row in res_p.fetchall()}
+            if "sort" not in pcols:
+                await conn.exec_driver_sql("ALTER TABLE products ADD COLUMN sort INTEGER NOT NULL DEFAULT 0;")
 
         # ensure schema_meta row
         res = await conn.execute(select(schema_meta.c.version).where(schema_meta.c.id == 1))
@@ -761,7 +777,7 @@ async def create_order(
     pickup_type: str = "asap",
     pickup_at=None,
 ) -> int:
-    now = datetime.utcnow()
+    now = utcnow()
 
     q = (
         orders.insert()

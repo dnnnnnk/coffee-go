@@ -53,13 +53,28 @@ class Settings(BaseSettings):
     )
 
     # ----------------------------
-    # Database (SQLite)
+    # Database
     # ----------------------------
+    # Можно задать DB_URL напрямую (лучший вариант). Если DB_URL пустой —
+    # используем сборку из параметров под выбранный бекенд.
+    DB_BACKEND: Literal["sqlite", "postgres"] = Field(default="sqlite", description="Бекенд БД")
+    DB_URL: str | None = Field(default=None, description="Полный SQLAlchemy async URL (sqlite+aiosqlite:// или postgresql+asyncpg://)")
+
+    # SQLite
     DB_PATH: Path = Field(default=BASE_DIR / "data" / "easycoffee.sqlite3", description="Путь к SQLite файлу")
     DB_TIMEOUT_SEC: int = Field(default=30, ge=1, le=120, description="busy_timeout для SQLite")
     DB_WAL: bool = Field(default=True, description="Включить WAL режим (рекомендуется)")
     DB_FOREIGN_KEYS: bool = Field(default=True, description="PRAGMA foreign_keys = ON")
-    DB_POOL_SIZE: int = Field(default=5, ge=1, le=50, description="Размер пула (для aiosqlite условно)")
+
+    # Postgres
+    PG_HOST: str = Field(default="localhost", description="Postgres host")
+    PG_PORT: int = Field(default=5432, ge=1, le=65535, description="Postgres port")
+    PG_DB: str = Field(default="easycoffee", description="Postgres database")
+    PG_USER: str = Field(default="postgres", description="Postgres user")
+    PG_PASSWORD: str = Field(default="postgres", description="Postgres password")
+
+    # Общие параметры
+    DB_POOL_SIZE: int = Field(default=5, ge=1, le=50, description="Размер пула соединений")
     DB_ECHO_SQL: bool = Field(default=False, description="Логировать SQL (в dev удобно, в prod обычно нет)")
 
     # ----------------------------
@@ -154,8 +169,9 @@ class Settings(BaseSettings):
         if not self.BOT_TOKEN or ":" not in self.BOT_TOKEN:
             raise ValueError("BOT_TOKEN is missing or looks invalid")
 
-        # DB directory
-        self.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        # DB directory only for sqlite
+        if (self.DB_BACKEND == "sqlite") and (self.DB_URL is None or self.DB_URL.startswith("sqlite")):
+            self.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
         # Order code sanity
         if len(set(self.ORDER_CODE_ALPHABET)) < len(self.ORDER_CODE_ALPHABET):
@@ -194,7 +210,26 @@ class Settings(BaseSettings):
     @property
     def db_url(self) -> str:
         # SQLAlchemy async URL
-        # absolute path avoids surprises when running from different cwd
+        # 1) Если задан DB_URL — используем его, но аккуратно нормализуем популярные схемы
+        if self.DB_URL:
+            u = self.DB_URL.strip()
+            # allow user to pass sync-style urls
+            if u.startswith("postgres://"):
+                u = "postgresql+asyncpg://" + u[len("postgres://"):]
+            elif u.startswith("postgresql://"):
+                u = "postgresql+asyncpg://" + u[len("postgresql://"):]
+            elif u.startswith("postgresql+psycopg2://"):
+                u = "postgresql+asyncpg://" + u[len("postgresql+psycopg2://"):]
+            return u
+
+        # 2) Иначе собираем по бекенду
+        if self.DB_BACKEND == "postgres":
+            return (
+                f"postgresql+asyncpg://{self.PG_USER}:{self.PG_PASSWORD}"
+                f"@{self.PG_HOST}:{self.PG_PORT}/{self.PG_DB}"
+            )
+
+        # default: sqlite
         p = self.DB_PATH.resolve()
         return f"sqlite+aiosqlite:///{p}"
 
