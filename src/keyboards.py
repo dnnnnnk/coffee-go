@@ -48,7 +48,6 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="☕ Кофейни", callback_data="open:cafes")
     b.button(text="🧺 Корзина", callback_data=CartOpenCB(cafe_id=0).pack())  # открыть корзину любой кофейни
-    b.button(text="💰 Баланс", callback_data="open:balance")
     b.button(text="👤 Профиль", callback_data=ProfileCB().pack())
     b.adjust(1)
     return b.as_markup()
@@ -61,33 +60,22 @@ def pickup_choice_kb(cafe_id: int) -> InlineKeyboardMarkup:
     b.adjust(1)
     return b.as_markup()
 
-def back_to_main_kb() -> InlineKeyboardMarkup:
-    b = InlineKeyboardBuilder()
-    b.button(text="⬅️ В меню", callback_data="open:main")
-    return b.as_markup()
-
-
-# ----------------------------
-# Balance / Topup
-# ----------------------------
-
-def balance_kb() -> InlineKeyboardMarkup:
-    b = InlineKeyboardBuilder()
-    b.button(text="➕ Пополнить", callback_data="balance:topup")
-    b.button(text="⬅️ Назад", callback_data="open:main")
-    b.adjust(1)
-    return b.as_markup()
-
-
-def topup_pay_kb(*, topup_id: int, pay_url: str | None) -> InlineKeyboardMarkup:
+def payment_pending_kb(*, cafe_id: int, order_id: int, pay_url: str | None) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
 
     if pay_url:
         b.button(text="🔗 Перейти к оплате", url=pay_url)
 
-    b.button(text="✅ Я оплатил", callback_data=f"topup:check:{topup_id}")
-    b.button(text="⬅️ Назад", callback_data="open:balance")
+    b.button(text="✅ Я оплатил", callback_data=f"order:check:{order_id}")
+    b.button(text="🧺 Корзина", callback_data=CartOpenCB(cafe_id=cafe_id).pack())
+    b.button(text="⬅️ Каталог", callback_data=f"open:categories:{cafe_id}")
+    b.button(text="⬅️ В меню", callback_data="open:main")
     b.adjust(1)
+    return b.as_markup()
+
+def back_to_main_kb() -> InlineKeyboardMarkup:
+    b = InlineKeyboardBuilder()
+    b.button(text="⬅️ В меню", callback_data="open:main")
     return b.as_markup()
 
 
@@ -270,14 +258,10 @@ def cart_kb(*, cafe_id: int, line_pairs: Iterable[tuple[int, int]], has_lines: b
     return b.as_markup()
 
 
-def checkout_kb(*, cafe_id: int, pay_url: str | None, payments_enabled: bool) -> InlineKeyboardMarkup:
+def checkout_kb(*, cafe_id: int) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-
-    if payments_enabled and pay_url:
-        # URL кнопка (InlineKeyboardButton с url)
-        b.button(text="🔗 Перейти к оплате", url=pay_url)
-
     b.button(text="🧺 Корзина", callback_data=CartOpenCB(cafe_id=cafe_id).pack())
     b.button(text="⬅️ Каталог", callback_data=f"open:categories:{cafe_id}")
+    b.button(text="⬅️ В меню", callback_data="open:main")
     b.adjust(1)
     return b.as_markup()

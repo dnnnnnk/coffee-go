@@ -22,7 +22,6 @@ class UserFlow(StatesGroup):
     choosing_modifiers = State()
     choosing_pickup = State()
     waiting_pickup_time = State()
-    waiting_topup_amount = State()
 
 
 # ----------------------------
@@ -90,7 +89,14 @@ class CartClearCB(CallbackData, prefix="cclear"):
     cafe_id: int
 
 
+
 class CheckoutCB(CallbackData, prefix="pay"):
+    cafe_id: int
+
+
+# CallbackData for checking an order payment (split payment flow)
+class OrderCheckCB(CallbackData, prefix="ocheck"):
+    order_id: int
     cafe_id: int
 
 

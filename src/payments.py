@@ -124,6 +124,7 @@ class YooKassaClient:
         metadata: dict[str, Any] | None = None,
         receipt: dict[str, Any] | None = None,
         notification_url: str | None = None,
+        transfers: list[dict[str, Any]] | None = None,
     ) -> PaymentCreateResult:
         body: dict[str, Any] = {
             "amount": {"value": money_str(amount), "currency": currency},
@@ -137,6 +138,8 @@ class YooKassaClient:
             body["receipt"] = receipt
         if notification_url:
             body["notification_url"] = notification_url
+        if transfers:
+            body["transfers"] = transfers
 
         payload = await self._request(
             "POST",
@@ -177,62 +180,123 @@ def get_yookassa_client(settings) -> YooKassaClient:
     )
 
 
-def build_topup_description(settings, *, topup_id: int) -> str:
-    prefix = getattr(settings, "TOPUP_DESCRIPTION_PREFIX", "EasyCoffee topup")
-    return f"{prefix} #{topup_id}"
+def build_order_description(settings, *, order_id: int) -> str:
+    prefix = getattr(settings, "ORDER_DESCRIPTION_PREFIX", "EasyCoffee order")
+    return f"{prefix} #{order_id}"
 
 
-async def create_payment_for_topup(
+async def create_payment_for_order(
     session: AsyncSession,
     settings,
     *,
-    topup_id: int,
-    amount: Decimal,
+    order_id: int,
     user_id: int,
+    return_url: str,
 ) -> PaymentCreateResult:
-    """Создаёт платеж в YooKassa для пополнения баланса (topup)."""
+    """Создаёт платеж в YooKassa для заказа со сплитом.
 
-    return_url = getattr(settings, "PAYMENT_RETURN_URL", None)
-    if not return_url:
-        raise PaymentError("PAYMENT_RETURN_URL не задан.")
+    Общая сумма = заказ (кофейне) + комиссия платформы.
+    Деньги за кофе переводим кофейне через transfers, остаток остаётся платформе.
+    """
 
     client = get_yookassa_client(settings)
 
-    # stable idempotence key: topup id
-    idem = f"topup:{topup_id}"
+    # загрузим заказ + кофейню
+    q = (
+        select(
+            db.orders.c.id,
+            db.orders.c.total,
+            db.orders.c.cafe_id,
+            db.cafes.c.name.label("cafe_name"),
+            db.cafes.c.yookassa_account_id,
+        )
+        .select_from(db.orders.join(db.cafes, db.orders.c.cafe_id == db.cafes.c.id))
+        .where(db.orders.c.id == order_id)
+    )
+    row = (await session.execute(q)).mappings().one_or_none()
+    if not row:
+        raise PaymentError("Заказ не найден.")
 
-    metadata = {"topup_id": str(topup_id), "user_id": str(user_id)}
+    if int(row["cafe_id"]) <= 0:
+        raise PaymentError("У заказа не указана кофейня.")
+
+    cafe_account_id = str(row.get("yookassa_account_id") or "").strip()
+    if not cafe_account_id:
+        raise PaymentError("У кофейни не настроен yookassa_account_id для сплита.")
+
+    # сумма заказа = кофе
+    coffee_amount = Decimal(str(row["total"]))
+
+    # комиссия платформы
+    fee_fixed = Decimal(str(getattr(settings, "PLATFORM_FEE_FIXED", "0")))
+    fee_pct = Decimal(str(getattr(settings, "PLATFORM_FEE_PCT", "0")))  # например 0.05
+
+    platform_fee = fee_fixed
+    if fee_pct != 0:
+        platform_fee += (coffee_amount * fee_pct).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+
+    if platform_fee < 0:
+        platform_fee = Decimal("0.00")
+
+    total_amount = (coffee_amount + platform_fee).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+
+    idem = f"order:{order_id}"
+
+    metadata = {
+        "type": "order",
+        "order_id": str(order_id),
+        "user_id": str(user_id),
+        "cafe_id": str(row["cafe_id"]),
+        "platform_fee": money_str(platform_fee),
+        "coffee_amount": money_str(coffee_amount),
+    }
 
     notification_url = None
     if getattr(settings, "WEBHOOKS_ENABLED", False):
         base = getattr(settings, "PUBLIC_BASE_URL", None)
         if base:
-            path = getattr(settings, "yookassa_webhook_url_path", "/webhooks/yookassa")
+            path = getattr(settings, "YOOKASSA_WEBHOOK_PATH", "/webhooks/yookassa")
             secret = getattr(settings, "WEBHOOK_SECRET", None)
             if secret:
                 notification_url = f"{base.rstrip('/')}{path}?secret={secret}"
             else:
                 notification_url = f"{base.rstrip('/')}{path}"
 
+    # split: переводим кофейне сумму заказа, остаток (комиссия) остаётся платформе
+    transfers = [
+        {
+            "account_id": cafe_account_id,
+            "amount": {"value": money_str(coffee_amount), "currency": str(getattr(settings, "CURRENCY", "RUB"))},
+        }
+    ]
+
+    # создаём платеж
     res = await client.create_payment(
-        amount=amount,
+        amount=total_amount,
         currency=str(getattr(settings, "CURRENCY", "RUB")),
-        description=build_topup_description(settings, topup_id=topup_id),
-        return_url=str(return_url),
+        description=build_order_description(settings, order_id=order_id),
+        return_url=return_url,
         capture=bool(getattr(settings, "PAYMENT_CAPTURE", True)),
         idempotence_key=idem,
         metadata=metadata,
         notification_url=notification_url,
+        receipt=None,
+        transfers=transfers,
     )
 
-    # persist provider info into topup row
-    await db.set_topup_provider_payment(
-        session,
-        topup_id=topup_id,
-        provider_payment_id=res.payment_id,
-        confirmation_url=res.confirmation_url,
-        status=str(res.status),
-        payload_json=res.raw,
+    await session.execute(
+        db.orders.update()
+        .where(db.orders.c.id == order_id)
+        .values(
+            provider="yookassa",
+            provider_payment_id=res.payment_id,
+            payment_status=str(res.status),
+            pay_url=res.confirmation_url,
+            payment_payload=json.dumps(res.raw, ensure_ascii=False),
+            platform_fee=float(platform_fee),
+            total_with_fee=float(total_amount),
+            updated_at=db.utcnow(),
+        )
     )
 
     return res
@@ -296,13 +360,7 @@ async def process_yookassa_webhook(
     *,
     payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Идемпотентная обработка webhook YooKassa для пополнений (topups).
-
-    Делает:
-      - определяет topup_id из metadata (лучший вариант)
-      - иначе пытается найти topup по provider_payment_id
-      - обновляет topup.status и сохраняет payload
-    """
+    """Идемпотентная обработка webhook YooKassa для заказов."""
 
     if not isinstance(payload, dict):
         raise PaymentError("Webhook payload должен быть JSON-объектом.")
@@ -316,87 +374,47 @@ async def process_yookassa_webhook(
 
     status = _event_to_status(event, str(pay_obj.get("status") or "").strip() or None)
 
-    # 1) try metadata
-    topup_id: int | None = None
+    # определить order_id
+    order_id: int | None = None
     md = pay_obj.get("metadata")
-    if isinstance(md, dict) and "topup_id" in md:
+    if isinstance(md, dict) and str(md.get("type") or "") == "order" and "order_id" in md:
         try:
-            topup_id = int(str(md["topup_id"]))
+            order_id = int(str(md["order_id"]))
         except Exception:
-            topup_id = None
+            order_id = None
 
-    # 2) fallback by provider_payment_id
-    if topup_id is None:
-        q = select(db.topups.c.id).where(
-            and_(db.topups.c.provider == "yookassa", db.topups.c.provider_payment_id == payment_id)
+    if order_id is None:
+        q = select(db.orders.c.id).where(
+            and_(db.orders.c.provider == "yookassa", db.orders.c.provider_payment_id == payment_id)
         )
         found = (await session.execute(q)).scalar_one_or_none()
         if found is not None:
-            topup_id = int(found)
+            order_id = int(found)
 
-    if topup_id is None:
-        raise PaymentError("Не удалось определить topup_id для webhook.")
+    if order_id is None:
+        raise PaymentError("Не удалось определить order_id для webhook.")
 
     confirmation_url = None
     conf = pay_obj.get("confirmation")
     if isinstance(conf, dict):
         confirmation_url = conf.get("confirmation_url")
 
-    # Save provider info + status
-    await db.set_topup_provider_payment(
-        session,
-        topup_id=topup_id,
-        provider_payment_id=payment_id,
-        confirmation_url=confirmation_url,
-        status=str(status),
-        payload_json=payload,
+    await session.execute(
+        db.orders.update()
+        .where(db.orders.c.id == order_id)
+        .values(
+            provider_payment_id=payment_id,
+            payment_status=str(status),
+            pay_url=confirmation_url,
+            payment_payload=json.dumps(payload, ensure_ascii=False),
+            updated_at=db.utcnow(),
+        )
     )
 
-    # Update topup status
-    await db.set_topup_status(session, topup_id, str(status))
+    # если платеж успешен — помечаем заказ оплаченным
+    if status == "succeeded":
+        await session.execute(
+            db.orders.update().where(db.orders.c.id == order_id).values(status="paid", updated_at=db.utcnow())
+        )
 
-    return {"ok": True, "topup_id": topup_id, "payment_id": payment_id, "status": status}
-
-
-# ----------------------------
-# Reconciliation utility
-# ----------------------------
-
-
-async def refresh_topup_status_from_provider(
-    session: AsyncSession,
-    settings,
-    *,
-    topup_id: int,
-) -> dict[str, Any]:
-    """Если webhook не дошёл: вручную дернуть статус платежа по topup."""
-
-    topup = await db.get_topup(session, topup_id)
-    if not topup:
-        raise PaymentError("Пополнение не найдено.")
-
-    provider_payment_id = str(topup.get("provider_payment_id") or "").strip()
-    if not provider_payment_id:
-        raise PaymentError("У пополнения нет provider_payment_id.")
-
-    client = get_yookassa_client(settings)
-    payload = await client.get_payment(provider_payment_id)
-
-    status = str(payload.get("status", "pending"))
-    confirmation_url = None
-    conf = payload.get("confirmation")
-    if isinstance(conf, dict):
-        confirmation_url = conf.get("confirmation_url")
-
-    await db.set_topup_provider_payment(
-        session,
-        topup_id=topup_id,
-        provider_payment_id=provider_payment_id,
-        confirmation_url=confirmation_url,
-        status=status,
-        payload_json=payload,
-    )
-
-    await db.set_topup_status(session, topup_id, status)
-
-    return {"topup_id": topup_id, "provider_payment_id": provider_payment_id, "status": status}
+    return {"ok": True, "order_id": order_id, "payment_id": payment_id, "status": status}

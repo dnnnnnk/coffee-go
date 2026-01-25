@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import secrets
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -91,13 +92,23 @@ class Settings(BaseSettings):
     )
 
     # ----------------------------
-    # Payments (YooKassa) + test mode
+    # Payments (YooKassa) — split payments (маркетплейс)
     # ----------------------------
-    PAYMENTS_ENABLED: bool = Field(default=False, description="Включить оплату. Если False — тестовый флоу без оплаты.")
-    PAYMENT_PROVIDER: Literal["yookassa"] = Field(default="yookassa", description="Провайдер оплаты (пока один)")
+    PAYMENTS_ENABLED: bool = Field(default=True, description="Включить оплату через YooKassa")
     CURRENCY: str = Field(default="RUB", min_length=3, max_length=3, description="Валюта заказов")
 
-    # ЮKassa creds (обязательны только если PAYMENTS_ENABLED=1)
+    # Split: комиссия в наш магазин, основной платёж — в магазин кофейни
+    YOOKASSA_SPLIT_ENABLED: bool = Field(default=True, description="Включить split-платежи (комиссия платформы + перевод кофейне)")
+
+    # Комиссия платформы (берём сверху с пользователя)
+    PLATFORM_FEE_MODE: Literal["fixed", "percent", "none"] = Field(
+        default="fixed",
+        description="Как считать комиссию платформы: fixed/percent/none",
+    )
+    PLATFORM_FEE_AMOUNT: Decimal = Field(default=Decimal("15.00"), description="Фикс комиссия, RUB")
+    PLATFORM_FEE_PERCENT: Decimal = Field(default=Decimal("0.00"), description="Процент комиссии (0..100)")
+
+    # YooKassa creds платформы (нашего магазина) — обязательны если PAYMENTS_ENABLED=1
     YOOKASSA_SHOP_ID: str | None = Field(default=None, description="ЮKassa shopId")
     YOOKASSA_SECRET_KEY: str | None = Field(default=None, description="ЮKassa secret key")
 
@@ -185,12 +196,20 @@ class Settings(BaseSettings):
             if not self.YOOKASSA_SHOP_ID or not self.YOOKASSA_SECRET_KEY:
                 raise ValueError("PAYMENTS_ENABLED=1 requires YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY")
             if not self.PAYMENT_RETURN_URL:
-                # без return_url можно жить, но UX и флоу разваливаются (особенно на мобиле)
                 raise ValueError("PAYMENTS_ENABLED=1 requires PAYMENT_RETURN_URL")
+
+            if self.YOOKASSA_SPLIT_ENABLED:
+                if self.PLATFORM_FEE_MODE not in {"fixed", "percent", "none"}:
+                    raise ValueError("PLATFORM_FEE_MODE must be fixed/percent/none")
+                if self.PLATFORM_FEE_MODE == "fixed" and self.PLATFORM_FEE_AMOUNT < 0:
+                    raise ValueError("PLATFORM_FEE_AMOUNT must be >= 0")
+                if self.PLATFORM_FEE_MODE == "percent":
+                    if self.PLATFORM_FEE_PERCENT < 0 or self.PLATFORM_FEE_PERCENT > 100:
+                        raise ValueError("PLATFORM_FEE_PERCENT must be between 0 and 100")
 
             # Webhooks strongly recommended if payments enabled
             if not self.WEBHOOKS_ENABLED:
-               pass
+                pass
 
         # Webhooks requirements
         if self.WEBHOOKS_ENABLED:

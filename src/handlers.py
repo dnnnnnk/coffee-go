@@ -18,17 +18,12 @@ from . import db
 from . import payments
 from .config import get_settings
 from .db import session_scope
-# optional (будет добавлено в keyboards.py)
-try:
-    from .keyboards import balance_kb, topup_pay_kb
-except Exception:
-    balance_kb = None  # type: ignore
-    topup_pay_kb = None  # type: ignore
 from .keyboards import (
     back_to_main_kb,
     cafes_kb,
     categories_kb,
     checkout_kb,
+    payment_pending_kb,
     main_menu_kb,
     modifiers_kb,
     product_kb,
@@ -274,15 +269,6 @@ async def _show_cart(q: CallbackQuery, state: FSMContext, cafe_id: int) -> None:
     )
 
 
-# ----------------------------
-# Balance helpers
-# ----------------------------
-
-async def _show_balance(q: CallbackQuery) -> None:
-    async with session_scope(settings) as s:
-        bal = await services.get_balance(s, user_id=q.from_user.id)
-    kb = balance_kb() if callable(balance_kb) else back_to_main_kb()
-    await safe_edit(q, f"💰 Баланс: <b>{bal:.2f} ₽</b>", reply_markup=kb)
 
 
 
@@ -362,15 +348,6 @@ async def open_cart_from_menu(q: CallbackQuery, state: FSMContext) -> None:
         await safe_edit(q, e.message, reply_markup=back_to_main_kb())
 
 
-# ----------------------------
-# open:balance
-# ----------------------------
-
-@router.callback_query(F.data == "open:balance")
-async def open_balance(q: CallbackQuery, state: FSMContext) -> None:
-    await q.answer()
-    await state.set_state(None)
-    await _show_balance(q)
 
 
 @router.callback_query(F.data.startswith("open:categories:"))
@@ -873,14 +850,15 @@ async def on_mods_done(q: CallbackQuery, callback_data: ModsDoneCB, state: FSMCo
 @router.callback_query(PickupASAPCB.filter())
 async def on_pickup_asap(q: CallbackQuery, callback_data: PickupASAPCB, state: FSMContext) -> None:
     await q.answer()
-    cafe_id = callback_data.cafe_id
+    cafe_id = int(callback_data.cafe_id)
 
     await state.set_state(None)
     await state.update_data({FSM_KEY_PICKUP_MODE: "asap", FSM_KEY_PICKUP_TIME: None})
 
     try:
         async with session_scope(settings) as s:
-            res = await services.checkout_with_balance(
+            # 1) создаём заказ со статусом pending_payment
+            res = await services.checkout_pending_payment(
                 s,
                 settings,
                 user_id=q.from_user.id,
@@ -888,28 +866,26 @@ async def on_pickup_asap(q: CallbackQuery, callback_data: PickupASAPCB, state: F
                 pickup_type="asap",
                 pickup_at=None,
             )
-            receipt = await services.build_order_receipt(s, res.order_id)
-            text = services.format_receipt(receipt)
+            # 2) создаём оплату в Юкассе (split)
+            pay = await payments.create_payment_for_order(
+                s,
+                settings,
+                order_id=res.order_id,
+                user_id=q.from_user.id,
+                return_url=settings.PAYMENT_RETURN_URL,
+            )
 
-        # удалить старое сообщение с кнопками, чтобы чек был выше
-        await try_delete(q)
-
-        # 1) Чек (выше)
-        msg = await q.message.answer(text)
-        await try_pin(q.bot, q.message.chat.id, msg.message_id)
-
-        # 2) Сообщение ниже
-        await q.message.answer(
-            f"✅ Заказ создан.\nКод: <b>{res.code}</b>\nСумма: <b>{res.total:.2f} ₽</b>",
-            reply_markup=checkout_kb(cafe_id=cafe_id, pay_url=None, payments_enabled=False),
+        await safe_edit(
+            q,
+            f"💳 Оплата заказа <b>#{res.order_id}</b>\nСумма: <b>{res.total:.2f} ₽</b>\n\n"
+            f"Оплати по кнопке ниже, потом нажми <b>«Я оплатил»</b>.",
+            reply_markup=payment_pending_kb(cafe_id=cafe_id, order_id=res.order_id, pay_url=pay.confirmation_url),
         )
 
-    except getattr(services, "InsufficientBalance", services.ServiceError) as e:  # type: ignore
-        # если реально недостаточно денег — покажем баланс
-        if e.__class__.__name__ == "InsufficientBalance":
-            await safe_edit(q, f"❌ Недостаточно средств на балансе.\n\nПополнить?", reply_markup=(balance_kb() if callable(balance_kb) else back_to_main_kb()))
-        else:
-            await safe_edit(q, e.message, reply_markup=back_to_main_kb())
+    except payments.PaymentError as e:
+        await safe_edit(q, f"Ошибка оплаты: {e.message}", reply_markup=back_to_main_kb())
+    except services.ServiceError as e:
+        await safe_edit(q, e.message, reply_markup=back_to_main_kb())
 
 @router.callback_query(PickupTimeCB.filter())
 async def on_pickup_time(q: CallbackQuery, callback_data: PickupTimeCB, state: FSMContext) -> None:
@@ -959,7 +935,8 @@ async def on_pickup_time_input(m: Message, state: FSMContext) -> None:
 
     try:
         async with session_scope(settings) as s:
-            res = await services.checkout_with_balance(
+            # 1) создаём заказ со статусом pending_payment
+            res = await services.checkout_pending_payment(
                 s,
                 settings,
                 user_id=m.from_user.id,
@@ -967,70 +944,20 @@ async def on_pickup_time_input(m: Message, state: FSMContext) -> None:
                 pickup_type="time",
                 pickup_at=pickup_at,
             )
-            receipt = await services.build_order_receipt(s, res.order_id)
-            check = services.format_receipt(receipt)
-
-        # 1) чек
-        msg = await m.answer(check)
-        await try_pin(m.bot, m.chat.id, msg.message_id)
-
-        # 2) кнопки ниже
-        await m.answer(
-            f"✅ Заказ создан.\nКод: <b>{res.code}</b>\nСумма: <b>{res.total:.2f} ₽</b>\nКо времени: <b>{pickup_at.strftime('%H:%M')}</b>",
-            reply_markup=checkout_kb(cafe_id=cafe_id, pay_url=None, payments_enabled=False),
-        )
-
-    except getattr(services, "InsufficientBalance", services.ServiceError) as e:  # type: ignore
-        if e.__class__.__name__ == "InsufficientBalance":
-            await m.answer("❌ Недостаточно средств на балансе. Пополни и попробуй снова.", reply_markup=(balance_kb() if callable(balance_kb) else back_to_main_kb()))
-        else:
-            await m.answer(e.message, reply_markup=back_to_main_kb())
-
-# ----------------------------
-# Balance / Topup
-# ----------------------------
-
-@router.callback_query(F.data == "balance:topup")
-async def on_balance_topup(q: CallbackQuery, state: FSMContext) -> None:
-    await q.answer()
-    # просим сумму
-    await state.set_state(getattr(UserFlow, "waiting_topup_amount", UserFlow.waiting_pickup_time))
-    await safe_edit(q, "Введи сумму пополнения в ₽ (например: <b>300</b>)", reply_markup=back_to_main_kb())
-
-
-@router.message(getattr(UserFlow, "waiting_topup_amount", UserFlow.waiting_pickup_time))
-async def on_topup_amount_input(m: Message, state: FSMContext) -> None:
-    text = (m.text or "").strip().replace(",", ".")
-    try:
-        amount = float(text)
-    except Exception:
-        await m.answer("Нужна сумма числом. Например: <b>300</b>")
-        return
-
-    if amount <= 0:
-        await m.answer("Сумма должна быть больше нуля.")
-        return
-
-    # округляем до 2 знаков
-    amount = round(amount, 2)
-
-    await state.set_state(None)
-
-    try:
-        async with session_scope(settings) as s:
-            topup_id = await services.create_topup_request(s, settings, user_id=m.from_user.id, amount=amount)
-            pay = await payments.create_payment_for_topup(
+            # 2) создаём оплату в Юкассе (split)
+            pay = await payments.create_payment_for_order(
                 s,
                 settings,
-                topup_id=topup_id,
-                amount=amount,
+                order_id=res.order_id,
                 user_id=m.from_user.id,
+                return_url=settings.PAYMENT_RETURN_URL,
             )
 
-        kb = topup_pay_kb(topup_id=topup_id, pay_url=pay.confirmation_url) if callable(topup_pay_kb) else back_to_main_kb()
         await m.answer(
-            f"💳 Пополнение на <b>{amount:.2f} ₽</b>\n\nОплати по кнопке ниже.",
-            reply_markup=kb,
+            f"💳 Оплата заказа <b>#{res.order_id}</b>\nСумма: <b>{res.total:.2f} ₽</b>\n"
+            f"Ко времени: <b>{pickup_at.strftime('%H:%M')}</b>\n\n"
+            f"Оплати по кнопке ниже, потом нажми <b>«Я оплатил»</b>.",
+            reply_markup=payment_pending_kb(cafe_id=cafe_id, order_id=res.order_id, pay_url=pay.confirmation_url),
         )
 
     except payments.PaymentError as e:
@@ -1038,31 +965,6 @@ async def on_topup_amount_input(m: Message, state: FSMContext) -> None:
     except services.ServiceError as e:
         await m.answer(e.message, reply_markup=back_to_main_kb())
 
-
-@router.callback_query(F.data.startswith("topup:check:"))
-async def on_topup_check(q: CallbackQuery) -> None:
-    await q.answer()
-    try:
-        topup_id = int(q.data.split(":")[-1])
-    except Exception:
-        await q.answer("Не понял пополнение.", show_alert=True)
-        return
-
-    try:
-        async with session_scope(settings) as s:
-            info = await payments.refresh_topup_status_from_provider(s, settings, topup_id=topup_id)
-
-            if str(info.get("status")) == "succeeded":
-                # показать новый баланс
-                await _show_balance(q)
-                return
-
-        await q.answer("Платёж ещё не подтверждён. Попробуй позже.", show_alert=True)
-
-    except payments.PaymentError as e:
-        await q.answer(f"Не могу проверить оплату: {e.message}", show_alert=True)
-    except services.ServiceError as e:
-        await q.answer(e.message, show_alert=True)
 
 # ----------------------------
 # Checkout
@@ -1076,6 +978,46 @@ async def on_checkout(q: CallbackQuery, callback_data: CheckoutCB, state: FSMCon
     await state.set_state(UserFlow.choosing_pickup)
     await state.update_data({FSM_KEY_CAFE_ID: cafe_id})
     await safe_edit(q, "Когда сделать кофе?", reply_markup=pickup_choice_kb(cafe_id))
+
+
+# ----------------------------
+# Order payment check ("Я оплатил")
+# ----------------------------
+
+@router.callback_query(F.data.startswith("order:check:"))
+async def on_order_check(q: CallbackQuery, state: FSMContext) -> None:
+    await q.answer()
+
+    try:
+        order_id = int(q.data.split(":")[-1])
+    except Exception:
+        await q.answer("Не понял заказ.", show_alert=True)
+        return
+
+    try:
+        async with session_scope(settings) as s:
+            info = await payments.refresh_order_status_from_provider(s, settings, order_id=order_id)
+
+            if str(info.get("status")) == "succeeded":
+                # соберём чек
+                receipt = await services.build_order_receipt(s, order_id)
+                text = services.format_receipt(receipt)
+
+                # удалим старое сообщение с кнопками (если можно)
+                await try_delete(q)
+
+                msg = await q.message.answer(text)
+                await try_pin(q.bot, q.message.chat.id, msg.message_id)
+
+                await q.message.answer("✅ Оплата прошла. Заказ принят.", reply_markup=back_to_main_kb())
+                return
+
+        await q.answer("Платёж ещё не подтверждён. Попробуй чуть позже.", show_alert=True)
+
+    except payments.PaymentError as e:
+        await q.answer(f"Не могу проверить оплату: {e.message}", show_alert=True)
+    except services.ServiceError as e:
+        await q.answer(e.message, show_alert=True)
 
 # ----------------------------
 # Profile
