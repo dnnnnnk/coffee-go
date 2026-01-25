@@ -120,6 +120,35 @@ class Settings(BaseSettings):
     PAYMENT_DESCRIPTION_PREFIX: str = Field(default="EasyCoffee order", description="Префикс описания платежа")
 
     # ----------------------------
+    # Web panel (sessions/auth)
+    # ----------------------------
+    WEB_BASE_URL: str = Field(
+        default="http://localhost:8080",
+        description="Базовый URL веб-панели (нужен для ссылок/redirects)",
+    )
+
+    # Где лежат HTML-шаблоны
+    WEB_TEMPLATES_DIR: Path = Field(default=BASE_DIR / "src" / "web" / "templates", description="Папка с Jinja2 templates")
+
+
+    # Session cookies
+    WEB_SESSION_SECRET: str | None = Field(default=None, description="Секрет подписи сессий веб-панели")
+    WEB_SESSION_TTL_MIN: int = Field(default=60 * 24 * 7, ge=1, le=60 * 24 * 30, description="TTL сессии в минутах")
+
+    WEB_COOKIE_NAME: str = Field(default="coffee_go_session", description="Имя cookie для сессии")
+
+    # Secure/HTTPS. Оставляем оба флага ради совместимости, но нормализуем ниже.
+    WEB_COOKIE_SECURE: bool = Field(default=False, description="Cookie Secure (true для https)")
+    WEB_COOKIE_HTTPS_ONLY: bool | None = Field(default=None, description="Alias для WEB_COOKIE_SECURE (если задан в env — имеет приоритет)")
+
+    WEB_COOKIE_HTTPONLY: bool = Field(default=True, description="Cookie HttpOnly")
+    WEB_COOKIE_SAMESITE: Literal["lax", "strict", "none"] = Field(default="lax", description="SameSite политика для cookie")
+
+    # Admin unlock: доп-пароль внутри веба
+    WEB_ADMIN_UNLOCK_TTL_MIN: int = Field(default=30, ge=1, le=1440, description="Сколько минут действует admin-unlock")
+
+
+    # ----------------------------
     # Webhook (для подтверждения оплаты и веб-панели позже)
     # ----------------------------
     # Даже если сейчас тестишь без оплаты — лучше уже иметь настройки на будущее.
@@ -145,6 +174,11 @@ class Settings(BaseSettings):
     @classmethod
     def _coerce_db_path(cls, v):
         # allow passing as string in env
+        return Path(v) if isinstance(v, str) else v
+
+    @field_validator("WEB_TEMPLATES_DIR", mode="before")
+    @classmethod
+    def _coerce_templates_dir(cls, v):
         return Path(v) if isinstance(v, str) else v
 
     @field_validator("ADMINS", mode="before")
@@ -210,6 +244,24 @@ class Settings(BaseSettings):
             # Webhooks strongly recommended if payments enabled
             if not self.WEBHOOKS_ENABLED:
                 pass
+
+        # Web sessions secret
+        if not self.WEB_SESSION_SECRET:
+            # в prod не генерим молча — чтобы не сбрасывать сессии при перезапуске
+            if self.ENV == "prod":
+                raise ValueError("WEB_SESSION_SECRET is required in prod")
+            self.WEB_SESSION_SECRET = secrets.token_urlsafe(32)
+
+        # cookie settings sanity
+        # нормализуем WEB_COOKIE_HTTPS_ONLY (alias) -> WEB_COOKIE_SECURE
+        if self.WEB_COOKIE_HTTPS_ONLY is None:
+            self.WEB_COOKIE_HTTPS_ONLY = bool(self.WEB_COOKIE_SECURE)
+        else:
+            self.WEB_COOKIE_SECURE = bool(self.WEB_COOKIE_HTTPS_ONLY)
+
+        if self.WEB_COOKIE_SAMESITE == "none" and not self.WEB_COOKIE_SECURE:
+            # браузеры требуют Secure при SameSite=None
+            raise ValueError("WEB_COOKIE_SAMESITE='none' requires WEB_COOKIE_SECURE=1")
 
         # Webhooks requirements
         if self.WEBHOOKS_ENABLED:

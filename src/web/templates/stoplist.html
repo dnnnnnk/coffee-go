@@ -1,0 +1,157 @@
+
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Стоп‑лист</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
+    .topbar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; }
+    .nav a { margin-right: 10px; text-decoration:none; }
+    .badge { padding: 4px 10px; border-radius: 999px; font-size: 12px; border:1px solid #ddd; }
+    .badge.ok { background:#eaffea; border-color:#bfe8bf; }
+    .badge.no { background:#fff1f1; border-color:#f0c1c1; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .card { border:1px solid #e6e6e6; border-radius:12px; padding:14px; }
+    .card h2 { margin:0 0 10px 0; font-size:16px; }
+    .row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px dashed #eee; }
+    .row:last-child { border-bottom:none; }
+    .muted { color:#666; font-size:12px; }
+    .name { font-weight:600; }
+    .toggle { display:flex; align-items:center; gap:10px; }
+    .btn { padding:6px 10px; border-radius:10px; border:1px solid #ddd; background:#fff; cursor:pointer; }
+    .btn.danger { border-color:#f0c1c1; background:#fff1f1; }
+    .btn.ok { border-color:#bfe8bf; background:#eaffea; }
+    .search { width: 100%; padding:10px 12px; border-radius: 12px; border:1px solid #ddd; margin-bottom:10px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="nav">
+    <a href="/dashboard">Дашборд</a>
+    <a href="/orders">Заказы</a>
+    <a href="/stoplist"><b>Стоп‑лист</b></a>
+    <a href="/menu">Меню</a>
+  </div>
+
+  <div style="display:flex; align-items:center; gap:10px;">
+    {% if admin_unlocked %}
+      <span class="badge ok">admin: unlocked</span>
+    {% else %}
+      <span class="badge no">admin: locked</span>
+    {% endif %}
+
+    <form method="post" action="/logout" style="margin:0;">
+      <button class="btn" type="submit">Выйти</button>
+    </form>
+  </div>
+</div>
+
+<h1 style="margin: 0 0 12px 0;">Стоп‑лист</h1>
+<p class="muted" style="margin-top:0;">Включённый стоп‑лист = позиция недоступна в боте.</p>
+
+<input class="search" id="q" placeholder="Поиск по товарам/модификаторам…" />
+
+<div class="grid">
+
+  <!-- PRODUCTS -->
+  <div class="card">
+    <h2>Товары</h2>
+
+    {% if products and products|length > 0 %}
+      {% for p in products %}
+        <div class="row" data-name="{{ (p.name or '')|lower }}">
+          <div>
+            <div class="name">{{ p.name }}</div>
+            {% if p.category_name %}<div class="muted">{{ p.category_name }}</div>{% endif %}
+          </div>
+
+          <div class="toggle">
+            {% if p.is_blocked %}
+              <span class="badge no">blocked</span>
+            {% else %}
+              <span class="badge ok">active</span>
+            {% endif %}
+
+            <form method="post" action="/stoplist" style="margin:0;">
+              <input type="hidden" name="kind" value="product" />
+              <input type="hidden" name="id" value="{{ p.id }}" />
+              {% if p.is_blocked %}
+                <input type="hidden" name="enabled" value="0" />
+                <button class="btn ok" type="submit">Разблок</button>
+              {% else %}
+                <input type="hidden" name="enabled" value="1" />
+                <button class="btn danger" type="submit">В стоп</button>
+              {% endif %}
+            </form>
+          </div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="muted">Пока нет товаров.</div>
+    {% endif %}
+  </div>
+
+  <!-- MODIFIERS -->
+  <div class="card">
+    <h2>Модификаторы</h2>
+
+    {% if modifiers and modifiers|length > 0 %}
+      {% for m in modifiers %}
+        <div class="row" data-name="{{ (m.name or '')|lower }}">
+          <div>
+            <div class="name">{{ m.name }}</div>
+            <div class="muted">
+              {% if m.group_name %}{{ m.group_name }}{% endif %}
+              {% if m.product_name %} • {{ m.product_name }}{% endif %}
+            </div>
+          </div>
+
+          <div class="toggle">
+            {% if m.is_blocked %}
+              <span class="badge no">blocked</span>
+            {% else %}
+              <span class="badge ok">active</span>
+            {% endif %}
+
+            <form method="post" action="/stoplist" style="margin:0;">
+              <input type="hidden" name="kind" value="modifier" />
+              <input type="hidden" name="id" value="{{ m.id }}" />
+              {% if m.is_blocked %}
+                <input type="hidden" name="enabled" value="0" />
+                <button class="btn ok" type="submit">Разблок</button>
+              {% else %}
+                <input type="hidden" name="enabled" value="1" />
+                <button class="btn danger" type="submit">В стоп</button>
+              {% endif %}
+            </form>
+          </div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="muted">Пока нет модификаторов.</div>
+    {% endif %}
+  </div>
+
+</div>
+
+<script>
+  const q = document.getElementById('q');
+  const rows = Array.from(document.querySelectorAll('[data-name]'));
+
+  function applyFilter() {
+    const v = (q.value || '').trim().toLowerCase();
+    for (const r of rows) {
+      const name = r.getAttribute('data-name') || '';
+      r.style.display = !v || name.includes(v) ? '' : 'none';
+    }
+  }
+
+  q.addEventListener('input', applyFilter);
+</script>
+
+</body>
+</html>

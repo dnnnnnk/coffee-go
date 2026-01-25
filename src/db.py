@@ -39,7 +39,7 @@ from sqlalchemy.pool import NullPool
 # ----------------------------
 metadata = MetaData()
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def utcnow() -> datetime:
@@ -73,6 +73,9 @@ cafes = Table(
     Column("name", String(128), nullable=False),
     Column("legal_name", String(256), nullable=True),
     Column("yookassa_account_id", String(128), nullable=True),
+    Column("web_login", String(64), nullable=True),
+    Column("web_password_hash", String(256), nullable=True),
+    Column("admin_password_hash", String(256), nullable=True),
     Column("is_active", Boolean, nullable=False, server_default="1"),
     Column("is_overloaded", Boolean, nullable=False, server_default="0"),
     Column("created_at", DateTime(timezone=True), nullable=False),
@@ -381,6 +384,12 @@ async def init_db(settings) -> None:
                 await conn.exec_driver_sql("ALTER TABLE cafes ADD COLUMN legal_name TEXT;")
             if not await _pg_has_column("cafes", "yookassa_account_id"):
                 await conn.exec_driver_sql("ALTER TABLE cafes ADD COLUMN yookassa_account_id TEXT;")
+            if not await _pg_has_column("cafes", "web_login"):
+                await conn.exec_driver_sql("ALTER TABLE cafes ADD COLUMN web_login TEXT;")
+            if not await _pg_has_column("cafes", "web_password_hash"):
+                await conn.exec_driver_sql("ALTER TABLE cafes ADD COLUMN web_password_hash TEXT;")
+            if not await _pg_has_column("cafes", "admin_password_hash"):
+                await conn.exec_driver_sql("ALTER TABLE cafes ADD COLUMN admin_password_hash TEXT;")
 
             # orders: payment fields
             if not await _pg_has_column("orders", "payment_provider"):
@@ -441,6 +450,12 @@ async def init_db(settings) -> None:
                 await conn.exec_driver_sql("ALTER TABLE cafes ADD COLUMN legal_name TEXT NULL;")
             if "yookassa_account_id" not in ccols:
                 await conn.exec_driver_sql("ALTER TABLE cafes ADD COLUMN yookassa_account_id TEXT NULL;")
+            if "web_login" not in ccols:
+                await conn.exec_driver_sql("ALTER TABLE cafes ADD COLUMN web_login TEXT NULL;")
+            if "web_password_hash" not in ccols:
+                await conn.exec_driver_sql("ALTER TABLE cafes ADD COLUMN web_password_hash TEXT NULL;")
+            if "admin_password_hash" not in ccols:
+                await conn.exec_driver_sql("ALTER TABLE cafes ADD COLUMN admin_password_hash TEXT NULL;")
 
             # --- users updated_at column (safety for older dbs) ---
             res_u = await conn.exec_driver_sql("PRAGMA table_info(users);")

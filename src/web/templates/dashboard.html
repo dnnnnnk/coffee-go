@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Coffee-Go • Dashboard</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background: #f6f7f9; color: #111; }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 20px; }
+    .topbar { background: #fff; border-bottom: 1px solid #e6e8ee; }
+    .topbar .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .brand { font-weight: 700; }
+    .nav { display: flex; gap: 10px; flex-wrap: wrap; }
+    .nav a { text-decoration: none; color: #111; background: #f1f3f7; padding: 8px 10px; border-radius: 10px; }
+    .nav a:hover { background: #e7ebf3; }
+    .right { display: flex; align-items: center; gap: 10px; }
+    .badge { font-size: 12px; padding: 6px 10px; border-radius: 999px; background: #eee; }
+    .badge.ok { background: #e7f7ea; color: #0f6a2a; border: 1px solid #bfe8c9; }
+    .badge.no { background: #fff2e6; color: #8a4b00; border: 1px solid #ffd3a8; }
+    .card { background: #fff; border: 1px solid #e6e8ee; border-radius: 14px; padding: 16px; }
+    .muted { color: #667085; }
+    form { margin: 0; }
+    button.link { border: 0; background: transparent; color: #111; cursor: pointer; text-decoration: underline; padding: 0; }
+    .btn { display: inline-block; text-decoration: none; background: #111; color: #fff; padding: 10px 12px; border-radius: 12px; font-weight: 600; }
+    .btn:hover { opacity: 0.9; }
+    .btn.secondary { background: #f1f3f7; color: #111; }
+  </style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap">
+    <div class="brand">☕ Coffee-Go</div>
+
+    <nav class="nav">
+      <a href="/dashboard">Главная</a>
+      <a href="/orders">Заказы</a>
+      <a href="/stoplist">Стоп-лист</a>
+      <a href="/menu">Меню</a>
+      <a href="/admin/unlock">Админ</a>
+    </nav>
+
+    <div class="right">
+      {% if admin_unlocked %}
+        <span class="badge ok">admin unlocked</span>
+      {% else %}
+        <span class="badge no">admin locked</span>
+      {% endif %}
+
+      <form action="/logout" method="post">
+        <button class="link" type="submit">Выйти</button>
+      </form>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="card">
+    <h2 style="margin: 0 0 6px;">Панель кофейни</h2>
+    <div class="muted" style="display:flex; align-items:center; justify-content:space-between; gap: 12px; flex-wrap: wrap;">
+      <div>
+        Кофейня: <b>{{ cafe_name or ("#" ~ cafe_id) }}</b>
+      </div>
+
+      <div>
+        <a class="btn" href="/admin/unlock">Открыть админку</a>
+      </div>
+    </div>
+
+    <hr style="border: 0; border-top: 1px solid #eef0f4; margin: 14px 0;" />
+
+    <div class="muted">
+      Быстрые ссылки:
+      <ul style="margin: 8px 0 0; padding-left: 18px;">
+        <li><a href="/orders">Смотреть заказы</a></li>
+        <li><a href="/stoplist">Управлять стоп-листом</a></li>
+        <li><a href="/admin/unlock">Разблокировать админ-доступ</a></li>
+      </ul>
+    </div>
+  </div>
+</main>
+
+</body>
+</html>

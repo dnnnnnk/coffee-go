@@ -1,0 +1,455 @@
+
+
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Меню</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --card: #121926;
+      --text: #e7eefc;
+      --muted: #9fb0cc;
+      --border: #22304a;
+      --btn: #1a2538;
+      --btn2: #24324c;
+      --ok: #4ade80;
+      --bad: #fb7185;
+      --warn: #fbbf24;
+      --link: #93c5fd;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    a { color: var(--link); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 22px; }
+
+    .nav {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+    }
+
+    .nav-left { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .brand { font-weight: 700; letter-spacing: .2px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.03);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+    .dot.ok { background: var(--ok); }
+
+    .nav-links { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--btn);
+      color: var(--text);
+      font-size: 14px;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .btn:hover { background: var(--btn2); }
+
+    .btn-danger { background: rgba(251, 113, 133, 0.12); border-color: rgba(251,113,133,0.35); }
+    .btn-danger:hover { background: rgba(251, 113, 133, 0.2); }
+
+    .card {
+      margin-top: 16px;
+      padding: 16px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+    }
+
+    .title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    h1 { font-size: 18px; margin: 0; }
+    .hint { color: var(--muted); font-size: 13px; }
+
+    .tools {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      max-width: 420px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.03);
+      color: var(--text);
+      outline: none;
+    }
+
+    input[type="text"]::placeholder { color: rgba(159,176,204,0.7); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .cat {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .cat-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      background: rgba(255,255,255,0.03);
+      border-bottom: 1px solid var(--border);
+      gap: 12px;
+    }
+
+    .cat-name { font-weight: 700; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px;
+      font-size: 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+
+    .products { padding: 12px 14px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 10px 8px;
+      border-bottom: 1px solid rgba(34,48,74,0.55);
+      vertical-align: top;
+    }
+
+    th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+
+    .muted { color: var(--muted); }
+
+    .ok { color: var(--ok); font-weight: 700; }
+    .bad { color: var(--bad); font-weight: 700; }
+
+    .mods {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .modgrp {
+      border: 1px solid rgba(34,48,74,0.8);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .modgrp-title { font-weight: 700; }
+    .modgrp-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+    .modlist {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 9px;
+      border: 1px solid rgba(34,48,74,0.9);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.02);
+      font-size: 13px;
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    .chip.off { opacity: 0.55; }
+
+    .chip .delta { color: var(--muted); }
+
+    .empty {
+      color: var(--muted);
+      padding: 18px 0;
+      text-align: center;
+    }
+
+    .admin-box {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(251, 191, 36, 0.35);
+      background: rgba(251,191,36,0.08);
+      color: rgba(251,191,36,0.95);
+      font-size: 13px;
+    }
+
+    .admin-box.ok {
+      border-color: rgba(74, 222, 128, 0.35);
+      background: rgba(74,222,128,0.08);
+      color: rgba(74,222,128,0.95);
+    }
+
+    .small { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <div class="nav">
+      <div class="nav-left">
+        <div class="brand">☕ Coffee-Go</div>
+
+        {% if is_admin %}
+          <div class="pill"><span class="dot ok"></span>admin unlocked</div>
+        {% else %}
+          <div class="pill"><span class="dot"></span>admin locked</div>
+        {% endif %}
+      </div>
+
+      <div class="nav-links">
+        <a class="btn" href="/dashboard">Dashboard</a>
+        <a class="btn" href="/orders">Заказы</a>
+        <a class="btn" href="/stoplist">Стоп‑лист</a>
+        <a class="btn" href="/menu">Меню</a>
+        <form method="post" action="/logout" style="margin:0;">
+          <button class="btn btn-danger" type="submit">Выйти</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="title">
+        <h1>Меню</h1>
+        <div class="hint">Пока только просмотр (read-only)</div>
+      </div>
+
+      {% if is_admin %}
+        <div class="admin-box ok">✅ Админ-разблокировка активна. Скоро тут появится CRUD.</div>
+      {% else %}
+        <div class="admin-box">⚠️ Для редактирования меню нужна админ-разблокировка.</div>
+      {% endif %}
+
+      <div class="tools">
+        <input id="q" type="text" placeholder="Поиск по товарам/модификаторам…" autocomplete="off" />
+        <div class="small">Подсказка: поиск работает локально, без запросов</div>
+      </div>
+
+      <div class="grid" id="menuRoot">
+        {#
+          Ожидаемый формат данных (пример):
+          categories = [
+            {
+              id, name, sort, is_active,
+              products: [
+                {
+                  id, name, description, base_price, is_active,
+                  modifier_groups: [
+                    {
+                      id, name, required, min_select, max_select, is_active,
+                      modifiers: [ {id, name, price_delta, is_active} ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        #}
+
+        {% if not categories or categories|length == 0 %}
+          <div class="empty">Меню пустое. Добавь данные через seed или админку.</div>
+        {% endif %}
+
+        {% for cat in categories %}
+          <div class="cat" data-search="{{ (cat.name or '')|lower }}">
+            <div class="cat-head">
+              <div>
+                <div class="cat-name">{{ cat.name }}</div>
+                <div class="small">Категория #{{ cat.id }}</div>
+              </div>
+
+              {% if cat.is_active %}
+                <div class="badge"><span class="ok">Активна</span></div>
+              {% else %}
+                <div class="badge"><span class="bad">Скрыта</span></div>
+              {% endif %}
+            </div>
+
+            <div class="products">
+              {% if not cat.products or cat.products|length == 0 %}
+                <div class="empty">В этой категории пока нет товаров</div>
+              {% else %}
+                <table>
+                  <thead>
+                    <tr>
+                      <th style="width:34%">Товар</th>
+                      <th style="width:12%">Цена</th>
+                      <th style="width:12%">Статус</th>
+                      <th style="width:42%">Модификаторы</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for p in cat.products %}
+                      <tr class="row" data-search="{{ (cat.name ~ ' ' ~ (p.name or '') ~ ' ' ~ (p.description or ''))|lower }}">
+                        <td>
+                          <div style="font-weight:700;">{{ p.name }}</div>
+                          {% if p.description %}
+                            <div class="muted" style="margin-top:4px;">{{ p.description }}</div>
+                          {% endif %}
+                          <div class="small" style="margin-top:6px;">Товар #{{ p.id }}</div>
+                        </td>
+                        <td>
+                          <div style="font-weight:700;">{{ "%.2f"|format(p.base_price) }} ₽</div>
+                        </td>
+                        <td>
+                          {% if p.is_active %}
+                            <div class="ok">В продаже</div>
+                          {% else %}
+                            <div class="bad">Скрыт</div>
+                          {% endif %}
+                        </td>
+                        <td>
+                          {% if p.modifier_groups and p.modifier_groups|length > 0 %}
+                            <div class="mods">
+                              {% for g in p.modifier_groups %}
+                                <div class="modgrp" data-search="{{ ((g.name or '') ~ ' ' ~ (p.name or ''))|lower }}">
+                                  <div class="modgrp-title">
+                                    {{ g.name }}
+                                    {% if g.required %}
+                                      <span class="badge" style="margin-left:8px;">обяз.</span>
+                                    {% endif %}
+                                  </div>
+                                  <div class="modgrp-meta">
+                                    выбор: {{ g.min_select }}…{{ g.max_select }}
+                                    · {% if g.is_active %}<span class="ok">активна</span>{% else %}<span class="bad">скрыта</span>{% endif %}
+                                  </div>
+
+                                  {% if g.modifiers and g.modifiers|length > 0 %}
+                                    <div class="modlist">
+                                      {% for m in g.modifiers %}
+                                        <span class="chip {% if not m.is_active %}off{% endif %}" data-search="{{ (m.name or '')|lower }}">
+                                          {{ m.name }}
+                                          {% if m.price_delta and m.price_delta != 0 %}
+                                            <span class="delta">+{{ "%.2f"|format(m.price_delta) }} ₽</span>
+                                          {% else %}
+                                            <span class="delta">+0 ₽</span>
+                                          {% endif %}
+                                        </span>
+                                      {% endfor %}
+                                    </div>
+                                  {% else %}
+                                    <div class="muted" style="margin-top:8px;">Нет модификаторов</div>
+                                  {% endif %}
+                                </div>
+                              {% endfor %}
+                            </div>
+                          {% else %}
+                            <div class="muted">Без модификаторов</div>
+                          {% endif %}
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const q = document.getElementById('q');
+    const root = document.getElementById('menuRoot');
+
+    function norm(s) {
+      return (s || '').toString().trim().toLowerCase();
+    }
+
+    function applyFilter() {
+      const query = norm(q.value);
+      const cats = Array.from(root.querySelectorAll('.cat'));
+
+      cats.forEach(cat => {
+        const rows = Array.from(cat.querySelectorAll('.row'));
+        let anyVisible = false;
+
+        // filter rows by their own data-search + nested chips/mod groups
+        rows.forEach(r => {
+          const base = norm(r.getAttribute('data-search'));
+          const nested = Array.from(r.querySelectorAll('[data-search]'))
+            .map(x => norm(x.getAttribute('data-search')))
+            .join(' ');
+
+          const ok = query === '' || (base + ' ' + nested).includes(query);
+          r.style.display = ok ? '' : 'none';
+          if (ok) anyVisible = true;
+        });
+
+        // show category only if has visible rows OR query empty and category itself matches
+        const catName = norm(cat.getAttribute('data-search'));
+        const showCat = query === '' ? true : (anyVisible || catName.includes(query));
+        cat.style.display = showCat ? '' : 'none';
+      });
+    }
+
+    q.addEventListener('input', applyFilter);
+    applyFilter();
+  </script>
+</body>
+</html>

@@ -641,9 +641,489 @@ async def checkout_pending_payment(
 # Profile
 # ----------------------------
 
+
 async def get_profile(session: AsyncSession, user_id: int) -> dict:
     await db.ensure_user(session, user_id)
     return await db.get_user_stats(session, user_id)
+
+
+# ----------------------------
+# Web panel services (pure, no HTML)
+# ----------------------------
+
+def _verify_password(password: str, password_hash: str | None) -> bool:
+    if not password_hash:
+        return False
+
+    # bcrypt hashes usually start with $2a$ / $2b$ / $2y$
+    if password_hash.startswith("$2"):
+        try:
+            import bcrypt  # type: ignore
+
+            return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+        except Exception:
+            return False
+
+    # fallback: plain string compare (dev only)
+    return password == password_hash
+
+
+async def web_auth_login(session: AsyncSession, *, login: str, password: str) -> int | None:
+    """Return cafe_id if credentials are valid, otherwise None."""
+    q = select(
+        db.cafes.c.id,
+        db.cafes.c.web_password_hash,
+        db.cafes.c.is_active,
+    ).where(db.cafes.c.web_login == login)
+
+    row = (await session.execute(q)).mappings().first()
+    if not row:
+        return None
+
+    if not bool(row.get("is_active", True)):
+        return None
+
+    if not _verify_password(password, row.get("web_password_hash")):
+        return None
+
+    return int(row["id"])
+
+
+async def web_admin_unlock(session: AsyncSession, *, cafe_id: int, admin_password: str) -> bool:
+    """Verifies admin password for a cafe."""
+    q = select(db.cafes.c.admin_password_hash).where(db.cafes.c.id == cafe_id)
+    row = (await session.execute(q)).mappings().first()
+    if not row:
+        return False
+    return _verify_password(admin_password, row.get("admin_password_hash"))
+
+
+async def web_list_orders(
+    session: AsyncSession,
+    *,
+    cafe_id: int,
+    status_filter: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> list[dict]:
+    """List orders for cafe. Status filter is optional."""
+    q = select(
+        db.orders.c.id,
+        db.orders.c.code,
+        db.orders.c.user_id,
+        db.orders.c.cafe_id,
+        db.orders.c.status,
+        db.orders.c.total,
+        db.orders.c.pickup_type,
+        db.orders.c.pickup_at,
+        db.orders.c.created_at,
+        db.orders.c.updated_at,
+    ).where(db.orders.c.cafe_id == cafe_id)
+
+    if status_filter:
+        q = q.where(db.orders.c.status == status_filter)
+
+    q = q.order_by(db.orders.c.created_at.desc()).limit(int(limit)).offset(int(offset))
+    rows = (await session.execute(q)).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def web_update_order_status(
+    session: AsyncSession,
+    *,
+    cafe_id: int,
+    order_id: int,
+    new_status: str,
+) -> bool:
+    """Updates order status if order belongs to cafe."""
+    now = db.utcnow()
+
+    q = (
+        db.orders.update()
+        .where(and_(db.orders.c.id == order_id, db.orders.c.cafe_id == cafe_id))
+        .values(status=new_status, updated_at=now)
+        .returning(db.orders.c.id)
+    )
+
+    row = (await session.execute(q)).first()
+    return row is not None
+
+
+async def web_get_stoplist(session: AsyncSession, *, cafe_id: int) -> dict:
+    """Return stoplist ids for products and modifiers."""
+    qp = select(db.stoplist_products.c.product_id).where(db.stoplist_products.c.cafe_id == cafe_id)
+    qm = select(db.stoplist_modifiers.c.modifier_id).where(db.stoplist_modifiers.c.cafe_id == cafe_id)
+
+    products = (await session.execute(qp)).scalars().all()
+    modifiers = (await session.execute(qm)).scalars().all()
+
+    return {
+        "products": [int(x) for x in products],
+        "modifiers": [int(x) for x in modifiers],
+    }
+
+
+async def web_set_stoplist_product(
+    session: AsyncSession,
+    *,
+    cafe_id: int,
+    product_id: int,
+    enabled: bool,
+) -> None:
+    now = db.utcnow()
+
+    if enabled:
+        # insert if not exists
+        q = db.stoplist_products.insert().values(
+            cafe_id=cafe_id,
+            product_id=product_id,
+            created_at=now,
+        )
+        try:
+            await session.execute(q)
+        except Exception:
+            # ignore duplicates
+            pass
+    else:
+        q = db.stoplist_products.delete().where(
+            and_(
+                db.stoplist_products.c.cafe_id == cafe_id,
+                db.stoplist_products.c.product_id == product_id,
+            )
+        )
+        await session.execute(q)
+
+
+async def web_set_stoplist_modifier(
+    session: AsyncSession,
+    *,
+    cafe_id: int,
+    modifier_id: int,
+    enabled: bool,
+) -> None:
+    now = db.utcnow()
+
+    if enabled:
+        q = db.stoplist_modifiers.insert().values(
+            cafe_id=cafe_id,
+            modifier_id=modifier_id,
+            created_at=now,
+        )
+        try:
+            await session.execute(q)
+        except Exception:
+            pass
+    else:
+        q = db.stoplist_modifiers.delete().where(
+            and_(
+                db.stoplist_modifiers.c.cafe_id == cafe_id,
+                db.stoplist_modifiers.c.modifier_id == modifier_id,
+            )
+        )
+        await session.execute(q)
+
+
+async def web_menu_read(session: AsyncSession, *, cafe_id: int) -> dict:
+    """Read-only menu dump for cafe (categories -> products -> groups -> modifiers)."""
+    cafe = await db.get_cafe(session, cafe_id)
+    if not cafe:
+        raise NotFound("Кофейня не найдена.")
+
+    categories = await db.list_categories(session, cafe_id)
+    products = await db.list_products(session, cafe_id, category_id=None)
+
+    # group products by category
+    prods_by_cat: dict[int, list[dict]] = {}
+    for p in products:
+        cid = int(p["category_id"])
+        prods_by_cat.setdefault(cid, []).append(p)
+
+    # load modifier groups/modifiers per product
+    groups_by_prod: dict[int, list[dict]] = {}
+    mods_by_group: dict[int, list[dict]] = {}
+
+    for p in products:
+        pid = int(p["id"])
+        groups = await db.list_modifier_groups(session, pid)
+        groups_by_prod[pid] = groups
+        for g in groups:
+            gid = int(g["id"])
+            mods_by_group[gid] = await db.list_modifiers(session, gid)
+
+    out_categories: list[dict] = []
+    for c in categories:
+        cid = int(c["id"])
+        out_products: list[dict] = []
+        for p in prods_by_cat.get(cid, []):
+            pid = int(p["id"])
+            out_groups: list[dict] = []
+            for g in groups_by_prod.get(pid, []):
+                gid = int(g["id"])
+                out_groups.append({**g, "modifiers": mods_by_group.get(gid, [])})
+            out_products.append({**p, "modifier_groups": out_groups})
+
+        out_categories.append({**c, "products": out_products})
+
+    return {
+        "cafe": cafe,
+        "categories": out_categories,
+    }
+
+
+# ----------------------------
+# Menu CRUD (v1)
+# ----------------------------
+
+async def web_menu_crud_create_category(
+    session: AsyncSession,
+    *,
+    cafe_id: int,
+    name: str,
+    sort: int = 0,
+    is_active: bool = True,
+) -> int:
+    now = db.utcnow()
+    values: dict[str, Any] = {
+        "cafe_id": cafe_id,
+        "name": name,
+        "is_active": bool(is_active),
+        "created_at": now,
+        "updated_at": now,
+    }
+    if "sort" in db.categories.c:
+        values["sort"] = int(sort)
+
+    row = (
+        await session.execute(
+            db.categories.insert().values(**values).returning(db.categories.c.id)
+        )
+    ).scalar_one()
+    return int(row)
+
+
+async def web_menu_crud_update_category(
+    session: AsyncSession,
+    *,
+    cafe_id: int,
+    category_id: int,
+    name: str | None = None,
+    sort: int | None = None,
+    is_active: bool | None = None,
+) -> bool:
+    now = db.utcnow()
+    values: dict[str, Any] = {"updated_at": now}
+    if name is not None:
+        values["name"] = name
+    if sort is not None and "sort" in db.categories.c:
+        values["sort"] = int(sort)
+    if is_active is not None:
+        values["is_active"] = bool(is_active)
+
+    q = (
+        db.categories.update()
+        .where(and_(db.categories.c.id == category_id, db.categories.c.cafe_id == cafe_id))
+        .values(**values)
+        .returning(db.categories.c.id)
+    )
+    return (await session.execute(q)).first() is not None
+
+
+async def web_menu_crud_create_product(
+    session: AsyncSession,
+    *,
+    cafe_id: int,
+    category_id: int,
+    name: str,
+    base_price: Decimal,
+    description: str | None = None,
+    sort: int = 0,
+    is_active: bool = True,
+) -> int:
+    now = db.utcnow()
+    values: dict[str, Any] = {
+        "cafe_id": cafe_id,
+        "category_id": category_id,
+        "name": name,
+        "description": description,
+        "base_price": d2(base_price),
+        "is_active": bool(is_active),
+        "created_at": now,
+        "updated_at": now,
+    }
+    if "sort" in db.products.c:
+        values["sort"] = int(sort)
+
+    row = (
+        await session.execute(
+            db.products.insert().values(**values).returning(db.products.c.id)
+        )
+    ).scalar_one()
+    return int(row)
+
+
+async def web_menu_crud_update_product(
+    session: AsyncSession,
+    *,
+    cafe_id: int,
+    product_id: int,
+    name: str | None = None,
+    description: str | None = None,
+    base_price: Decimal | None = None,
+    category_id: int | None = None,
+    sort: int | None = None,
+    is_active: bool | None = None,
+) -> bool:
+    now = db.utcnow()
+    values: dict[str, Any] = {"updated_at": now}
+
+    if name is not None:
+        values["name"] = name
+    if description is not None:
+        values["description"] = description
+    if base_price is not None:
+        values["base_price"] = d2(base_price)
+    if category_id is not None:
+        values["category_id"] = int(category_id)
+    if sort is not None and "sort" in db.products.c:
+        values["sort"] = int(sort)
+    if is_active is not None:
+        values["is_active"] = bool(is_active)
+
+    q = (
+        db.products.update()
+        .where(and_(db.products.c.id == product_id, db.products.c.cafe_id == cafe_id))
+        .values(**values)
+        .returning(db.products.c.id)
+    )
+    return (await session.execute(q)).first() is not None
+
+
+async def web_menu_crud_create_modifier_group(
+    session: AsyncSession,
+    *,
+    product_id: int,
+    name: str,
+    required: bool,
+    min_select: int,
+    max_select: int,
+    sort: int = 0,
+    is_active: bool = True,
+) -> int:
+    now = db.utcnow()
+    values: dict[str, Any] = {
+        "product_id": int(product_id),
+        "name": name,
+        "required": bool(required),
+        "min_select": int(min_select),
+        "max_select": int(max_select),
+        "is_active": bool(is_active),
+        "created_at": now,
+        "updated_at": now,
+    }
+    if "sort" in db.modifier_groups.c:
+        values["sort"] = int(sort)
+
+    row = (
+        await session.execute(
+            db.modifier_groups.insert().values(**values).returning(db.modifier_groups.c.id)
+        )
+    ).scalar_one()
+    return int(row)
+
+
+async def web_menu_crud_update_modifier_group(
+    session: AsyncSession,
+    *,
+    group_id: int,
+    name: str | None = None,
+    required: bool | None = None,
+    min_select: int | None = None,
+    max_select: int | None = None,
+    sort: int | None = None,
+    is_active: bool | None = None,
+) -> bool:
+    now = db.utcnow()
+    values: dict[str, Any] = {"updated_at": now}
+
+    if name is not None:
+        values["name"] = name
+    if required is not None:
+        values["required"] = bool(required)
+    if min_select is not None:
+        values["min_select"] = int(min_select)
+    if max_select is not None:
+        values["max_select"] = int(max_select)
+    if sort is not None and "sort" in db.modifier_groups.c:
+        values["sort"] = int(sort)
+    if is_active is not None:
+        values["is_active"] = bool(is_active)
+
+    q = (
+        db.modifier_groups.update()
+        .where(db.modifier_groups.c.id == group_id)
+        .values(**values)
+        .returning(db.modifier_groups.c.id)
+    )
+    return (await session.execute(q)).first() is not None
+
+
+async def web_menu_crud_create_modifier(
+    session: AsyncSession,
+    *,
+    group_id: int,
+    name: str,
+    price_delta: Decimal,
+    sort: int = 0,
+    is_active: bool = True,
+) -> int:
+    now = db.utcnow()
+    values: dict[str, Any] = {
+        "group_id": int(group_id),
+        "name": name,
+        "price_delta": d2(price_delta),
+        "is_active": bool(is_active),
+        "created_at": now,
+        "updated_at": now,
+    }
+    if "sort" in db.modifiers.c:
+        values["sort"] = int(sort)
+
+    row = (
+        await session.execute(
+            db.modifiers.insert().values(**values).returning(db.modifiers.c.id)
+        )
+    ).scalar_one()
+    return int(row)
+
+
+async def web_menu_crud_update_modifier(
+    session: AsyncSession,
+    *,
+    modifier_id: int,
+    name: str | None = None,
+    price_delta: Decimal | None = None,
+    sort: int | None = None,
+    is_active: bool | None = None,
+) -> bool:
+    now = db.utcnow()
+    values: dict[str, Any] = {"updated_at": now}
+
+    if name is not None:
+        values["name"] = name
+    if price_delta is not None:
+        values["price_delta"] = d2(price_delta)
+    if sort is not None and "sort" in db.modifiers.c:
+        values["sort"] = int(sort)
+    if is_active is not None:
+        values["is_active"] = bool(is_active)
+
+    q = (
+        db.modifiers.update()
+        .where(db.modifiers.c.id == modifier_id)
+        .values(**values)
+        .returning(db.modifiers.c.id)
+    )
+    return (await session.execute(q)).first() is not None
 
 
 # ----------------------------
