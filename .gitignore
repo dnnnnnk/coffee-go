@@ -44,6 +44,7 @@ logs/
 .LSOverride
 ._*
 Thumbs.db
+docker-compose.yml
 
 # ---- IDE ----
 .idea/
