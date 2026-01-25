@@ -2,27 +2,25 @@
 from __future__ import annotations
 
 from typing import Any
-from sqlalchemy import select, func
+from sqlalchemy import func
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import InlineKeyboardButton
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
-from .keyboards import pickup_choice_kb
+from src.bot.keyboards import pickup_choice_kb
 from datetime import datetime, timedelta
 from sqlalchemy import select
-from . import services
-from . import db
-from . import payments
-from .config import get_settings
-from .db import session_scope
-from .keyboards import (
+from src import services
+from src import db
+from src import payments
+from src.config import get_settings
+from src.db import session_scope
+from src.bot.keyboards import (
     back_to_main_kb,
     cafes_kb,
     categories_kb,
-    checkout_kb,
     payment_pending_kb,
     main_menu_kb,
     modifiers_kb,
@@ -30,7 +28,7 @@ from .keyboards import (
     products_kb,
     cart_kb,
 )
-from .models import (
+from src.models import (
     CafeCB,
     CategoryCB,
     ProductCB,

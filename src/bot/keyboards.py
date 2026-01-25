@@ -2,12 +2,12 @@
 from __future__ import annotations
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Iterable
-from .models import PickupASAPCB, PickupTimeCB
+from src.models import PickupASAPCB, PickupTimeCB
 
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from .models import (
+from src.models import (
     CafeCB,
     CategoryCB,
     ProductCB,

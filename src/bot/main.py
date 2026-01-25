@@ -9,11 +9,11 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from .config import get_settings
-from .db import get_engine, init_db, session_scope
-from .handlers import router as main_router
-from . import payments
-from . import services
+from src.config import get_settings
+from src.db import get_engine, init_db, session_scope
+from src.bot.handlers import router as main_router
+from src import payments
+from src import services
 
 logger = logging.getLogger("easycoffee")
 
