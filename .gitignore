@@ -1,0 +1,52 @@
+# ---- secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- python ----
+__pycache__/
+*.py[cod]
+*$py.class
+
+# venv
+.venv/
+venv/
+ENV/
+env/
+
+# caches / tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+nox/
+
+# builds
+build/
+dist/
+*.egg-info/
+
+# ---- logs/runtime ----
+*.log
+logs/
+
+# ---- local db/data (если появится) ----
+*.sqlite
+*.sqlite3
+*.db
+
+# ---- OS ----
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+
+# ---- IDE ----
+.idea/
+*.iml
+.vscode/
+*.code-workspace
