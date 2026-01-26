@@ -138,9 +138,10 @@
               </td>
               <td>
                 <div class="items">
-                  {% if o.items %}
+                  {% set order_items = o.get('items', []) if o is mapping else o.items %}
+                  {% if order_items %}
                     <ul style="margin:0;padding-left:16px">
-                      {% for it in o.items %}
+                      {% for it in order_items %}
                         <li>
                           <b>{{ it.title }}</b>
                           {% if it.modifiers %}

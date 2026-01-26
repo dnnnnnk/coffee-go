@@ -1,15 +1,52 @@
 services:
   postgres:
     image: postgres:16
-    container_name: ...
+    container_name: coffee_pg
+    restart: always
     environment:
-      POSTGRES_DB: ...
-      POSTGRES_USER: ...
-      POSTGRES_PASSWORD: ...
+      POSTGRES_DB: coffee
+      POSTGRES_USER: coffee
+      POSTGRES_PASSWORD: coffee
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+
+  web:
+    image: python:3.13-slim
+    container_name: coffee_web
+    restart: always
+    working_dir: /app
+    env_file:
+      - .env
+    environment:
+      # удобный дефолт, если в .env нет DATABASE_URL
+      DATABASE_URL: postgresql+asyncpg://coffee:coffee@postgres:5432/coffee
+    volumes:
+      - ./:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+    command: >
+      sh -c "pip install -r requirements.txt && uvicorn src.web.main:app --host 0.0.0.0 --port 8000"
+
+  bot:
+    image: python:3.13-slim
+    container_name: coffee_bot
+    restart: always
+    working_dir: /app
+    env_file:
+      - .env
+    environment:
+      # удобный дефолт, если в .env нет DATABASE_URL
+      DATABASE_URL: postgresql+asyncpg://coffee:coffee@postgres:5432/coffee
+    volumes:
+      - ./:/app
+    depends_on:
+      - postgres
+    command: >
+      sh -c "pip install -r requirements.txt && python -m src.bot.main"
 
 volumes:
   pgdata:
