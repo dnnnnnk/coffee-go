@@ -1,0 +1,96 @@
+
+
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}Coffee Go{% endblock %}</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#0b0b0b;color:#eee}
+    .topbar{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:#111;border-bottom:1px solid #222}
+    .nav a{color:#ddd;text-decoration:none;margin-right:14px;padding:6px 10px;border-radius:8px}
+    .nav a.active{background:#1a1a1a;color:#fff}
+    .right{display:flex;align-items:center;gap:10px}
+    .badge{font-size:12px;padding:4px 8px;border-radius:999px;background:#1a1a1a;border:1px solid #2a2a2a;color:#bbb}
+    .badge.on{color:#9cff9c;border-color:#244224}
+    .badge.off{color:#ffb3b3;border-color:#422424}
+    .btn{background:#1a1a1a;border:1px solid #2a2a2a;color:#eee;padding:8px 10px;border-radius:10px;cursor:pointer}
+    .btn:hover{background:#222}
+    .btn.small{padding:6px 8px;border-radius:9px;font-size:12px}
+    .btn.ok{border-color:#244224}
+    .btn.warn{border-color:#40321f}
+    .btn.bad{border-color:#422424}
+    .wrap{max-width:1200px;margin:0 auto;padding:18px}
+    h1{margin:0 0 14px 0;font-size:22px}
+    .toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+    .toolbar .left{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .toolbar select,.toolbar input{background:#111;border:1px solid #2a2a2a;color:#eee;padding:8px 10px;border-radius:10px}
+    .hint{color:#aaa;font-size:13px}
+
+    table{width:100%;border-collapse:collapse;background:#0f0f0f;border:1px solid #222;border-radius:14px;overflow:hidden}
+    th,td{padding:10px 10px;border-bottom:1px solid #1e1e1e;vertical-align:top}
+    th{background:#111;color:#bbb;font-weight:600;text-align:left;font-size:13px}
+    tr:hover td{background:#111}
+
+    .status{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;font-size:12px;border:1px solid #2a2a2a;background:#121212;color:#ddd}
+    .s-new{border-color:#2a2a2a;color:#ddd}
+    .s-paid{border-color:#244224;color:#9cff9c}
+    .s-making{border-color:#40321f;color:#ffd18a}
+    .s-ready{border-color:#244224;color:#9cff9c}
+    .s-done{border-color:#2a2a2a;color:#bbb}
+    .s-cancel{border-color:#422424;color:#ffb3b3}
+
+    .items{color:#ccc;font-size:13px;line-height:1.35}
+    .muted{color:#aaa;font-size:12px}
+
+    .actions{display:flex;gap:6px;flex-wrap:wrap}
+    .actions form{margin:0}
+    .rowcode{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px;color:#aaa}
+
+    .flash{background:#131313;border:1px solid #2a2a2a;padding:10px 12px;border-radius:12px;margin-bottom:14px}
+    .flash.ok{border-color:#244224;color:#9cff9c}
+    .flash.bad{border-color:#422424;color:#ffb3b3}
+
+    /* simple cards/blocks */
+    .card{background:#0f0f0f;border:1px solid #222;border-radius:14px;padding:14px}
+    .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
+    .col-12{grid-column:span 12}
+    @media (min-width: 900px){
+      .col-6{grid-column:span 6}
+      .col-4{grid-column:span 4}
+    }
+
+    a.link{color:#ddd;text-decoration:none}
+    a.link:hover{text-decoration:underline}
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  {% set _show_nav = (show_nav is not defined) or show_nav %}
+  {% if _show_nav %}
+    <div class="topbar">
+      <div class="nav">
+      <a class="{{ 'active' if active_page=='orders' else '' }}" href="/orders">Заказы</a>
+      <a class="{{ 'active' if active_page=='stoplist' else '' }}" href="/stoplist">Стоп-лист</a>
+      <a class="{{ 'active' if active_page=='menu' else '' }}" href="/menu">Меню</a>
+      <a class="{{ 'active' if active_page=='admin' else '' }}" href="/admin/unlock">Админ</a>
+    </div>
+      <div class="right">
+        {% if admin_unlocked %}
+          <span class="badge on">admin unlocked</span>
+        {% else %}
+          <span class="badge off">admin locked</span>
+        {% endif %}
+        <form method="post" action="/logout" style="margin:0">
+          <button class="btn" type="submit">Выйти</button>
+        </form>
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="wrap">
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

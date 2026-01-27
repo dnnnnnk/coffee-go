@@ -21,12 +21,14 @@ from .auth import (
 
 router = APIRouter()
 
+from fastapi.responses import RedirectResponse
+
 @router.get("/", include_in_schema=False)
 async def root(request: Request) -> RedirectResponse:
     # if logged in -> dashboard, else -> login
     if get_cafe_id(request) is not None:
         return _redirect("/dashboard")
-    return _redirect("/login")
+    return RedirectResponse(url="/orders", status_code=302)
 
 def _templates(request: Request):
     return request.app.state.templates
@@ -37,11 +39,12 @@ def _redirect(url: str) -> RedirectResponse:
     return RedirectResponse(url=url, status_code=303)
 
 
+
 @router.get("/login", response_class=HTMLResponse)
 async def login_get(request: Request) -> HTMLResponse:
     # already logged in -> dashboard
     if get_cafe_id(request) is not None:
-        return _redirect("/dashboard")
+        return _redirect("/orders")
 
     return _templates(request).TemplateResponse(
         "login.html",

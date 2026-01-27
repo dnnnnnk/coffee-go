@@ -83,7 +83,7 @@ def login_required(redirect_to: str = "/login"):
 
 
 def admin_required(
-    redirect_to: str = "/dashboard",
+    redirect_to: str = "/orders",
     *,
     login_redirect_to: str = "/login",
 ):

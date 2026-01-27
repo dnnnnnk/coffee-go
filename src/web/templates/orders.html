@@ -1,206 +1,135 @@
+{% extends "_base.html" %}
 
+{% block title %}Заказы{% endblock %}
 
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Заказы</title>
-  <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;background:#0b0b0b;color:#eee}
-    .topbar{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;background:#111;border-bottom:1px solid #222}
-    .nav a{color:#ddd;text-decoration:none;margin-right:14px;padding:6px 10px;border-radius:8px}
-    .nav a.active{background:#1a1a1a;color:#fff}
-    .right{display:flex;align-items:center;gap:10px}
-    .badge{font-size:12px;padding:4px 8px;border-radius:999px;background:#1a1a1a;border:1px solid #2a2a2a;color:#bbb}
-    .badge.on{color:#9cff9c;border-color:#244224}
-    .badge.off{color:#ffb3b3;border-color:#422424}
-    .btn{background:#1a1a1a;border:1px solid #2a2a2a;color:#eee;padding:8px 10px;border-radius:10px;cursor:pointer}
-    .btn:hover{background:#222}
-    .btn.small{padding:6px 8px;border-radius:9px;font-size:12px}
-    .btn.ok{border-color:#244224}
-    .btn.warn{border-color:#40321f}
-    .btn.bad{border-color:#422424}
-    .wrap{max-width:1200px;margin:0 auto;padding:18px}
-    h1{margin:0 0 14px 0;font-size:22px}
-    .toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
-    .toolbar .left{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    .toolbar select,.toolbar input{background:#111;border:1px solid #2a2a2a;color:#eee;padding:8px 10px;border-radius:10px}
-    .hint{color:#aaa;font-size:13px}
+{% block content %}
+  <h1>Заказы</h1>
 
-    table{width:100%;border-collapse:collapse;background:#0f0f0f;border:1px solid #222;border-radius:14px;overflow:hidden}
-    th,td{padding:10px 10px;border-bottom:1px solid #1e1e1e;vertical-align:top}
-    th{background:#111;color:#bbb;font-weight:600;text-align:left;font-size:13px}
-    tr:hover td{background:#111}
+  {% if flash_message %}
+    <div class="flash {{ 'ok' if flash_ok else 'bad' }}">{{ flash_message }}</div>
+  {% endif %}
 
-    .status{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;font-size:12px;border:1px solid #2a2a2a;background:#121212;color:#ddd}
-    .s-new{border-color:#2a2a2a;color:#ddd}
-    .s-paid{border-color:#244224;color:#9cff9c}
-    .s-making{border-color:#40321f;color:#ffd18a}
-    .s-ready{border-color:#244224;color:#9cff9c}
-    .s-done{border-color:#2a2a2a;color:#bbb}
-    .s-cancel{border-color:#422424;color:#ffb3b3}
+  <div class="toolbar">
+    <div class="left">
+      <form method="get" action="/orders" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0">
+        <label class="hint">Статус:</label>
+        <select name="status" onchange="this.form.submit()">
+          <option value="" {% if not status_filter %}selected{% endif %}>Все</option>
+          <option value="new" {% if status_filter=='new' %}selected{% endif %}>new</option>
+          <option value="paid" {% if status_filter=='paid' %}selected{% endif %}>paid</option>
+          <option value="making" {% if status_filter=='making' %}selected{% endif %}>making</option>
+          <option value="ready" {% if status_filter=='ready' %}selected{% endif %}>ready</option>
+          <option value="done" {% if status_filter=='done' %}selected{% endif %}>done</option>
+          <option value="canceled" {% if status_filter=='canceled' %}selected{% endif %}>canceled</option>
+        </select>
 
-    .items{color:#ccc;font-size:13px;line-height:1.35}
-    .muted{color:#aaa;font-size:12px}
-
-    .actions{display:flex;gap:6px;flex-wrap:wrap}
-    .actions form{margin:0}
-    .rowcode{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px;color:#aaa}
-
-    .flash{background:#131313;border:1px solid #2a2a2a;padding:10px 12px;border-radius:12px;margin-bottom:14px}
-    .flash.ok{border-color:#244224;color:#9cff9c}
-    .flash.bad{border-color:#422424;color:#ffb3b3}
-  </style>
-</head>
-<body>
-  <div class="topbar">
-    <div class="nav">
-      <a href="/dashboard">Главная</a>
-      <a class="active" href="/orders">Заказы</a>
-      <a href="/stoplist">Стоп‑лист</a>
-      <a href="/menu">Меню</a>
-      <a href="/admin/unlock">Админ</a>
-    </div>
-    <div class="right">
-      {% if admin_unlocked %}
-        <span class="badge on">admin unlocked</span>
-      {% else %}
-        <span class="badge off">admin locked</span>
-      {% endif %}
-      <form method="post" action="/logout" style="margin:0">
-        <button class="btn" type="submit">Выйти</button>
+        <label class="hint">Поиск:</label>
+        <input type="text" name="q" value="{{ q or '' }}" placeholder="код / #id" />
+        <button class="btn" type="submit">Применить</button>
       </form>
+    </div>
+    <div class="hint">
+      {{ cafe_name or ('Кофейня #' ~ cafe_id) }}
     </div>
   </div>
 
-  <div class="wrap">
-    <h1>Заказы</h1>
-
-    {% if flash_message %}
-      <div class="flash {{ 'ok' if flash_ok else 'bad' }}">{{ flash_message }}</div>
-    {% endif %}
-
-    <div class="toolbar">
-      <div class="left">
-        <form method="get" action="/orders" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0">
-          <label class="hint">Статус:</label>
-          <select name="status" onchange="this.form.submit()">
-            <option value="" {% if not status_filter %}selected{% endif %}>Все</option>
-            <option value="new" {% if status_filter=='new' %}selected{% endif %}>new</option>
-            <option value="paid" {% if status_filter=='paid' %}selected{% endif %}>paid</option>
-            <option value="making" {% if status_filter=='making' %}selected{% endif %}>making</option>
-            <option value="ready" {% if status_filter=='ready' %}selected{% endif %}>ready</option>
-            <option value="done" {% if status_filter=='done' %}selected{% endif %}>done</option>
-            <option value="canceled" {% if status_filter=='canceled' %}selected{% endif %}>canceled</option>
-          </select>
-
-          <label class="hint">Поиск:</label>
-          <input type="text" name="q" value="{{ q or '' }}" placeholder="код / #id" />
-          <button class="btn" type="submit">Применить</button>
-        </form>
-      </div>
-      <div class="hint">
-        {{ cafe_name or ('Кофейня #' ~ cafe_id) }}
-      </div>
-    </div>
-
-    <table>
-      <thead>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:80px">#</th>
+        <th style="width:120px">Код</th>
+        <th style="width:140px">Статус</th>
+        <th>Состав</th>
+        <th style="width:140px">Сумма</th>
+        <th style="width:170px">Время</th>
+        <th style="width:260px">Действия</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if not orders or orders|length == 0 %}
         <tr>
-          <th style="width:80px">#</th>
-          <th style="width:120px">Код</th>
-          <th style="width:140px">Статус</th>
-          <th>Состав</th>
-          <th style="width:140px">Сумма</th>
-          <th style="width:170px">Время</th>
-          <th style="width:260px">Действия</th>
+          <td colspan="7" class="muted">Пока пусто.</td>
         </tr>
-      </thead>
-      <tbody>
-        {% if not orders or orders|length == 0 %}
+      {% else %}
+        {% for o in orders %}
           <tr>
-            <td colspan="7" class="muted">Пока пусто.</td>
-          </tr>
-        {% else %}
-          {% for o in orders %}
-            <tr>
-              <td>
-                <b>{{ o.id }}</b>
-                <div class="muted">{{ o.created_at }}</div>
-              </td>
-              <td>
-                <div class="rowcode">{{ o.code }}</div>
-              </td>
-              <td>
-                {% set st = o.status %}
-                <span class="status s-{{ 'cancel' if st in ['canceled','cancelled'] else st }}">{{ st }}</span>
-              </td>
-              <td>
-                <div class="items">
-                  {% set order_items = o.get('items', []) if o is mapping else o.items %}
-                  {% if order_items %}
-                    <ul style="margin:0;padding-left:16px">
-                      {% for it in order_items %}
-                        <li>
-                          <b>{{ it.title }}</b>
-                          {% if it.modifiers %}
-                            <span class="muted">({{ it.modifiers }})</span>
-                          {% endif %}
-                          <span class="muted">— {{ it.qty }} × {{ '%.2f'|format(it.unit_price) }} ₽</span>
-                        </li>
-                      {% endfor %}
-                    </ul>
-                  {% else %}
-                    <span class="muted">—</span>
-                  {% endif %}
-                </div>
-              </td>
-              <td>
-                <b>{{ '%.2f'|format(o.total) }} ₽</b>
-              </td>
-              <td>
-                {% if o.pickup_type == 'asap' %}
-                  <div><b>Как можно скорее</b></div>
-                {% elif o.pickup_type == 'time' and o.pickup_at %}
-                  <div><b>Ко времени</b></div>
-                  <div class="muted">{{ o.pickup_at }}</div>
+            <td>
+              <b>{{ o.id }}</b>
+              <div class="muted">{{ o.created_at }}</div>
+            </td>
+            <td>
+              <div class="rowcode">{{ o.code }}</div>
+            </td>
+            <td>
+              {% set st = o.status %}
+              <span class="status s-{{ 'cancel' if st in ['canceled','cancelled'] else st }}">{{ st }}</span>
+            </td>
+            <td>
+              <div class="items">
+                {% set order_items = o.get('items', []) if o is mapping else o.items %}
+                {% if order_items %}
+                  <ul style="margin:0;padding-left:16px">
+                    {% for it in order_items %}
+                      <li>
+                        <b>{{ it.title }}</b>
+                        {% if it.modifiers %}
+                          <span class="muted">({{ it.modifiers }})</span>
+                        {% endif %}
+                        <span class="muted">— {{ it.qty }} × {{ '%.2f'|format(it.unit_price) }} ₽</span>
+                      </li>
+                    {% endfor %}
+                  </ul>
                 {% else %}
                   <span class="muted">—</span>
                 {% endif %}
-              </td>
-              <td>
-                <div class="actions">
-                  <form method="post" action="/orders/{{ o.id }}/status">
-                    <input type="hidden" name="new_status" value="making" />
-                    <button class="btn small warn" type="submit">В работу</button>
-                  </form>
+              </div>
+            </td>
+            <td>
+              <b>{{ '%.2f'|format(o.total) }} ₽</b>
+            </td>
+            <td>
+              {% if o.pickup_type == 'asap' %}
+                <div><b>Как можно скорее</b></div>
+              {% elif o.pickup_type == 'time' and o.pickup_at %}
+                <div><b>Ко времени</b></div>
+                <div class="muted">{{ o.pickup_at }}</div>
+              {% else %}
+                <span class="muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              <div class="actions">
+                <form method="post" action="/orders/{{ o.id }}/status">
+                  <input type="hidden" name="new_status" value="making" />
+                  <button class="btn small warn" type="submit">В работу</button>
+                </form>
 
-                  <form method="post" action="/orders/{{ o.id }}/status">
-                    <input type="hidden" name="new_status" value="ready" />
-                    <button class="btn small ok" type="submit">Готово</button>
-                  </form>
+                <form method="post" action="/orders/{{ o.id }}/status">
+                  <input type="hidden" name="new_status" value="ready" />
+                  <button class="btn small ok" type="submit">Готово</button>
+                </form>
 
-                  <form method="post" action="/orders/{{ o.id }}/status">
-                    <input type="hidden" name="new_status" value="done" />
-                    <button class="btn small" type="submit">Выдан</button>
-                  </form>
+                <form method="post" action="/orders/{{ o.id }}/status">
+                  <input type="hidden" name="new_status" value="done" />
+                  <button class="btn small" type="submit">Выдан</button>
+                </form>
 
-                  <form method="post" action="/orders/{{ o.id }}/status" onsubmit="return confirm('Отменить заказ #{{ o.id }}?')">
-                    <input type="hidden" name="new_status" value="canceled" />
-                    <button class="btn small bad" type="submit">Отмена</button>
-                  </form>
-                </div>
-              </td>
-            </tr>
-          {% endfor %}
-        {% endif %}
-      </tbody>
-    </table>
+                <form method="post" action="/orders/{{ o.id }}/status" onsubmit="return confirm('Отменить заказ #{{ o.id }}?')">
+                  <input type="hidden" name="new_status" value="canceled" />
+                  <button class="btn small bad" type="submit">Отмена</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% endfor %}
+      {% endif %}
+    </tbody>
+  </table>
 
-    <div class="hint" style="margin-top:12px">
-      Подсказка: статусы можно менять кнопками справа. Фильтр сверху — для быстрого контроля очереди.
-    </div>
+  <div class="hint" style="margin-top:12px">
+    Подсказка: статусы можно менять кнопками справа. Фильтр сверху — для быстрого контроля очереди.
   </div>
-</body>
-</html>
+{% endblock %}
+
+{# Vars for _base.html #}
+{% set active_page = 'orders' %}

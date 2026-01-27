@@ -1,157 +1,166 @@
+{# src/web/templates/stoplist.html #}
+{% extends "_base.html" %}
+{% set active_page = 'stoplist' %}
 
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Стоп‑лист</title>
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; }
-    .topbar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; }
-    .nav a { margin-right: 10px; text-decoration:none; }
-    .badge { padding: 4px 10px; border-radius: 999px; font-size: 12px; border:1px solid #ddd; }
-    .badge.ok { background:#eaffea; border-color:#bfe8bf; }
-    .badge.no { background:#fff1f1; border-color:#f0c1c1; }
-    .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-    .card { border:1px solid #e6e6e6; border-radius:12px; padding:14px; }
-    .card h2 { margin:0 0 10px 0; font-size:16px; }
-    .row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 0; border-bottom:1px dashed #eee; }
-    .row:last-child { border-bottom:none; }
-    .muted { color:#666; font-size:12px; }
-    .name { font-weight:600; }
-    .toggle { display:flex; align-items:center; gap:10px; }
-    .btn { padding:6px 10px; border-radius:10px; border:1px solid #ddd; background:#fff; cursor:pointer; }
-    .btn.danger { border-color:#f0c1c1; background:#fff1f1; }
-    .btn.ok { border-color:#bfe8bf; background:#eaffea; }
-    .search { width: 100%; padding:10px 12px; border-radius: 12px; border:1px solid #ddd; margin-bottom:10px; }
-    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-  </style>
-</head>
-<body>
+{% block title %}Стоп-лист{% endblock %}
 
-<div class="topbar">
-  <div class="nav">
-    <a href="/dashboard">Дашборд</a>
-    <a href="/orders">Заказы</a>
-    <a href="/stoplist"><b>Стоп‑лист</b></a>
-    <a href="/menu">Меню</a>
-  </div>
+{% block content %}
+  <div class="wrap">
+    <h1>Стоп-лист</h1>
 
-  <div style="display:flex; align-items:center; gap:10px;">
-    {% if admin_unlocked %}
-      <span class="badge ok">admin: unlocked</span>
-    {% else %}
-      <span class="badge no">admin: locked</span>
+    {% if flash_message %}
+      <div class="flash {{ 'ok' if flash_ok else 'bad' }}">{{ flash_message }}</div>
     {% endif %}
 
-    <form method="post" action="/logout" style="margin:0;">
-      <button class="btn" type="submit">Выйти</button>
-    </form>
+    <div class="toolbar">
+      <div class="left" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <label class="hint">Поиск:</label>
+        <input id="q" type="text" value="{{ q or '' }}" placeholder="товар / модификатор" />
+        <span class="hint">Фильтр локальный</span>
+      </div>
+      <div class="hint">
+        {{ cafe_name or ('Кофейня #' ~ cafe_id) }}
+      </div>
+    </div>
+
+    <div class="hint" style="margin: 8px 0 14px 0;">
+      Идея простая: позиции в стоп-листе нельзя добавить в корзину и нельзя оплатить заказ, если что-то попало в стоп-лист.
+    </div>
+
+    <h2 style="margin:18px 0 10px 0;font-size:18px">Товары</h2>
+    <table id="tblProducts">
+      <thead>
+        <tr>
+          <th style="width:100px">ID</th>
+          <th>Товар</th>
+          <th style="width:180px">Статус</th>
+          <th style="width:220px">Действие</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if not products or products|length == 0 %}
+          <tr><td colspan="4" class="muted">Товаров нет.</td></tr>
+        {% else %}
+          {% for p in products %}
+            {# ожидаем поля: id, name, in_stoplist (bool), is_active (bool, optional) #}
+            {% set in_sl = p.in_stoplist if p is mapping else p.in_stoplist %}
+            {% set is_act = (p.is_active if p is mapping else p.is_active) %}
+            <tr class="row" data-search="{{ ((p.name or '') ~ ' ' ~ (p.id|string))|lower }}">
+              <td><b>{{ p.id }}</b></td>
+              <td>
+                <div><b>{{ p.name }}</b></div>
+                {% if is_act is not none %}
+                  <div class="muted" style="margin-top:4px">в меню: {{ 'активен' if is_act else 'скрыт' }}</div>
+                {% endif %}
+              </td>
+              <td>
+                {% if in_sl %}
+                  <span class="status s-cancel">stop</span>
+                {% else %}
+                  <span class="status s-new">ok</span>
+                {% endif %}
+              </td>
+              <td>
+                <form method="post" action="/stoplist" style="margin:0;display:inline">
+                  <input type="hidden" name="kind" value="product" />
+                  <input type="hidden" name="product_id" value="{{ p.id }}" />
+                  {% if in_sl %}
+                    <input type="hidden" name="enabled" value="0" />
+                    <button class="btn small ok" type="submit">Убрать</button>
+                  {% else %}
+                    <input type="hidden" name="enabled" value="1" />
+                    <button class="btn small bad" type="submit">В стоп-лист</button>
+                  {% endif %}
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        {% endif %}
+      </tbody>
+    </table>
+
+    <h2 style="margin:22px 0 10px 0;font-size:18px">Модификаторы</h2>
+    <table id="tblModifiers">
+      <thead>
+        <tr>
+          <th style="width:100px">ID</th>
+          <th>Модификатор</th>
+          <th style="width:220px">Группа / Товар</th>
+          <th style="width:180px">Статус</th>
+          <th style="width:220px">Действие</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if not modifiers or modifiers|length == 0 %}
+          <tr><td colspan="5" class="muted">Модификаторов нет.</td></tr>
+        {% else %}
+          {% for m in modifiers %}
+            {# ожидаем поля: id, name, in_stoplist, group_name(optional), product_name(optional) #}
+            {% set in_sl = m.in_stoplist if m is mapping else m.in_stoplist %}
+            {% set gname = m.group_name if m is mapping else m.group_name %}
+            {% set pname = m.product_name if m is mapping else m.product_name %}
+            <tr class="row" data-search="{{ ((m.name or '') ~ ' ' ~ (gname or '') ~ ' ' ~ (pname or '') ~ ' ' ~ (m.id|string))|lower }}">
+              <td><b>{{ m.id }}</b></td>
+              <td>
+                <div><b>{{ m.name }}</b></div>
+              </td>
+              <td>
+                <div class="muted">
+                  {% if gname %}{{ gname }}{% else %}—{% endif %}
+                  {% if pname %}<span class="muted"> · {{ pname }}</span>{% endif %}
+                </div>
+              </td>
+              <td>
+                {% if in_sl %}
+                  <span class="status s-cancel">stop</span>
+                {% else %}
+                  <span class="status s-new">ok</span>
+                {% endif %}
+              </td>
+              <td>
+                <form method="post" action="/stoplist" style="margin:0;display:inline">
+                  <input type="hidden" name="kind" value="modifier" />
+                  <input type="hidden" name="modifier_id" value="{{ m.id }}" />
+                  {% if in_sl %}
+                    <input type="hidden" name="enabled" value="0" />
+                    <button class="btn small ok" type="submit">Убрать</button>
+                  {% else %}
+                    <input type="hidden" name="enabled" value="1" />
+                    <button class="btn small bad" type="submit">В стоп-лист</button>
+                  {% endif %}
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        {% endif %}
+      </tbody>
+    </table>
+
+    <div class="hint" style="margin-top:12px">
+      Подсказка: включай стоп-лист на позиции, которые реально закончились, чтобы бот не принимал заказы на них.
+    </div>
   </div>
-</div>
+{% endblock %}
 
-<h1 style="margin: 0 0 12px 0;">Стоп‑лист</h1>
-<p class="muted" style="margin-top:0;">Включённый стоп‑лист = позиция недоступна в боте.</p>
-
-<input class="search" id="q" placeholder="Поиск по товарам/модификаторам…" />
-
-<div class="grid">
-
-  <!-- PRODUCTS -->
-  <div class="card">
-    <h2>Товары</h2>
-
-    {% if products and products|length > 0 %}
-      {% for p in products %}
-        <div class="row" data-name="{{ (p.name or '')|lower }}">
-          <div>
-            <div class="name">{{ p.name }}</div>
-            {% if p.category_name %}<div class="muted">{{ p.category_name }}</div>{% endif %}
-          </div>
-
-          <div class="toggle">
-            {% if p.is_blocked %}
-              <span class="badge no">blocked</span>
-            {% else %}
-              <span class="badge ok">active</span>
-            {% endif %}
-
-            <form method="post" action="/stoplist" style="margin:0;">
-              <input type="hidden" name="kind" value="product" />
-              <input type="hidden" name="id" value="{{ p.id }}" />
-              {% if p.is_blocked %}
-                <input type="hidden" name="enabled" value="0" />
-                <button class="btn ok" type="submit">Разблок</button>
-              {% else %}
-                <input type="hidden" name="enabled" value="1" />
-                <button class="btn danger" type="submit">В стоп</button>
-              {% endif %}
-            </form>
-          </div>
-        </div>
-      {% endfor %}
-    {% else %}
-      <div class="muted">Пока нет товаров.</div>
-    {% endif %}
-  </div>
-
-  <!-- MODIFIERS -->
-  <div class="card">
-    <h2>Модификаторы</h2>
-
-    {% if modifiers and modifiers|length > 0 %}
-      {% for m in modifiers %}
-        <div class="row" data-name="{{ (m.name or '')|lower }}">
-          <div>
-            <div class="name">{{ m.name }}</div>
-            <div class="muted">
-              {% if m.group_name %}{{ m.group_name }}{% endif %}
-              {% if m.product_name %} • {{ m.product_name }}{% endif %}
-            </div>
-          </div>
-
-          <div class="toggle">
-            {% if m.is_blocked %}
-              <span class="badge no">blocked</span>
-            {% else %}
-              <span class="badge ok">active</span>
-            {% endif %}
-
-            <form method="post" action="/stoplist" style="margin:0;">
-              <input type="hidden" name="kind" value="modifier" />
-              <input type="hidden" name="id" value="{{ m.id }}" />
-              {% if m.is_blocked %}
-                <input type="hidden" name="enabled" value="0" />
-                <button class="btn ok" type="submit">Разблок</button>
-              {% else %}
-                <input type="hidden" name="enabled" value="1" />
-                <button class="btn danger" type="submit">В стоп</button>
-              {% endif %}
-            </form>
-          </div>
-        </div>
-      {% endfor %}
-    {% else %}
-      <div class="muted">Пока нет модификаторов.</div>
-    {% endif %}
-  </div>
-
-</div>
-
+{% block scripts %}
 <script>
-  const q = document.getElementById('q');
-  const rows = Array.from(document.querySelectorAll('[data-name]'));
+  (function () {
+    const q = document.getElementById('q');
+    if (!q) return;
 
-  function applyFilter() {
-    const v = (q.value || '').trim().toLowerCase();
-    for (const r of rows) {
-      const name = r.getAttribute('data-name') || '';
-      r.style.display = !v || name.includes(v) ? '' : 'none';
+    function norm(s){ return (s || '').toString().trim().toLowerCase(); }
+
+    function apply(){
+      const query = norm(q.value);
+      const rows = document.querySelectorAll('tr.row');
+      rows.forEach(r => {
+        const base = norm(r.getAttribute('data-search'));
+        r.style.display = (query === '' || base.includes(query)) ? '' : 'none';
+      });
     }
-  }
 
-  q.addEventListener('input', applyFilter);
+    q.addEventListener('input', apply);
+    apply();
+  })();
 </script>
-
-</body>
-</html>
+{% endblock %}

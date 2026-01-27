@@ -1036,4 +1036,3 @@ async def on_profile(q: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query()
 async def unknown_callback(q: CallbackQuery) -> None:
     await q.answer("Кнопка устарела. Открой меню заново: /start", show_alert=True)
-
