@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     # ----------------------------
     # Payments (YooKassa) — split payments (маркетплейс)
     # ----------------------------
+    PAYMENTS_MODE: str = "yookassa"  # "yookassa" | "mock"
     PAYMENTS_ENABLED: bool = Field(default=True, description="Включить оплату через YooKassa")
     CURRENCY: str = Field(default="RUB", min_length=3, max_length=3, description="Валюта заказов")
 

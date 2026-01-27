@@ -168,7 +168,58 @@ class YooKassaClient:
 # ----------------------------
 # Public API used by handlers/services
 # ----------------------------
+async def refresh_order_status_from_provider(
+    session: AsyncSession,
+    settings,
+    *,
+    order_id: int,
+) -> dict[str, Any]:
+    row = (await session.execute(
+        select(
+            db.orders.c.payment_provider,
+            db.orders.c.provider_payment_id,
+            db.orders.c.payment_status,
+        ).where(db.orders.c.id == order_id)
+    )).mappings().one_or_none()
 
+    if not row:
+        raise PaymentError("Заказ не найден.")
+
+    provider = str(row.get("payment_provider") or "").strip()
+
+    # mock: всегда succeeded
+    if provider == "mock" or is_mock_mode(settings):
+        return {"status": "succeeded", "provider": "mock"}
+
+    if provider != "yookassa":
+        # если вдруг нет провайдера — просто вернём что есть
+        return {"status": str(row.get("payment_status") or "pending"), "provider": provider or None}
+
+    payment_id = str(row.get("provider_payment_id") or "").strip()
+    if not payment_id:
+        return {"status": str(row.get("payment_status") or "pending"), "provider": "yookassa"}
+
+    client = get_yookassa_client(settings)
+    pay = await client.get_payment(payment_id)
+    status = str(pay.get("status") or "pending")
+
+    await session.execute(
+        db.orders.update()
+        .where(db.orders.c.id == order_id)
+        .values(payment_status=status, updated_at=db.utcnow())
+    )
+    if status == "succeeded":
+        await session.execute(
+            db.orders.update()
+            .where(db.orders.c.id == order_id)
+            .values(status="paid", paid_at=db.utcnow(), updated_at=db.utcnow())
+        )
+
+    return {"status": status, "provider": "yookassa", "raw": pay}
+
+
+def is_mock_mode(settings) -> bool:
+    return str(getattr(settings, "PAYMENTS_MODE", "yookassa")).lower() == "mock"
 
 def get_yookassa_client(settings) -> YooKassaClient:
     if not getattr(settings, "YOOKASSA_SHOP_ID", None) or not getattr(settings, "YOOKASSA_SECRET_KEY", None):
@@ -193,15 +244,34 @@ async def create_payment_for_order(
     user_id: int,
     return_url: str,
 ) -> PaymentCreateResult:
-    """Создаёт платеж в YooKassa для заказа со сплитом.
 
-    Общая сумма = заказ (кофейне) + комиссия платформы.
-    Деньги за кофе переводим кофейне через transfers, остаток остаётся платформе.
-    """
+    # mock: сразу успех
+    if is_mock_mode(settings):
+        mock_payment_id = f"mock-{order_id}"
+        await session.execute(
+            db.orders.update()
+            .where(db.orders.c.id == order_id)
+            .values(
+                payment_provider="mock",
+                provider_payment_id=mock_payment_id,
+                payment_status="succeeded",
+                payment_confirmation_url=None,
+                status="paid",
+                paid_at=db.utcnow(),
+                updated_at=db.utcnow(),
+            )
+        )
+        return PaymentCreateResult(
+            provider="mock",
+            payment_id=mock_payment_id,
+            status="succeeded",
+            confirmation_url=None,
+            raw={"mock": True, "order_id": order_id, "user_id": user_id},
+        )
 
+    # --- обычная ЮKassa ---
     client = get_yookassa_client(settings)
 
-    # загрузим заказ + кофейню
     q = (
         select(
             db.orders.c.id,
@@ -217,69 +287,43 @@ async def create_payment_for_order(
     if not row:
         raise PaymentError("Заказ не найден.")
 
-    if int(row["cafe_id"]) <= 0:
-        raise PaymentError("У заказа не указана кофейня.")
-
     cafe_account_id = str(row.get("yookassa_account_id") or "").strip()
     if not cafe_account_id:
         raise PaymentError("У кофейни не настроен yookassa_account_id для сплита.")
 
-    # сумма заказа = кофе
     coffee_amount = Decimal(str(row["total"]))
 
-    # комиссия платформы
     fee_fixed = Decimal(str(getattr(settings, "PLATFORM_FEE_FIXED", "0")))
-    fee_pct = Decimal(str(getattr(settings, "PLATFORM_FEE_PCT", "0")))  # например 0.05
-
+    fee_pct = Decimal(str(getattr(settings, "PLATFORM_FEE_PCT", "0")))
     platform_fee = fee_fixed
     if fee_pct != 0:
         platform_fee += (coffee_amount * fee_pct).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
-
     if platform_fee < 0:
         platform_fee = Decimal("0.00")
 
     total_amount = (coffee_amount + platform_fee).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
 
-    idem = f"order:{order_id}"
+    transfers = [{
+        "account_id": cafe_account_id,
+        "amount": {"value": money_str(coffee_amount), "currency": str(getattr(settings, "CURRENCY", "RUB"))},
+    }]
 
-    metadata = {
-        "type": "order",
-        "order_id": str(order_id),
-        "user_id": str(user_id),
-        "cafe_id": str(row["cafe_id"]),
-        "platform_fee": money_str(platform_fee),
-        "coffee_amount": money_str(coffee_amount),
-    }
-
-    notification_url = None
-    if getattr(settings, "WEBHOOKS_ENABLED", False):
-        base = getattr(settings, "PUBLIC_BASE_URL", None)
-        if base:
-            path = getattr(settings, "YOOKASSA_WEBHOOK_PATH", "/webhooks/yookassa")
-            secret = getattr(settings, "WEBHOOK_SECRET", None)
-            if secret:
-                notification_url = f"{base.rstrip('/')}{path}?secret={secret}"
-            else:
-                notification_url = f"{base.rstrip('/')}{path}"
-
-    # split: переводим кофейне сумму заказа, остаток (комиссия) остаётся платформе
-    transfers = [
-        {
-            "account_id": cafe_account_id,
-            "amount": {"value": money_str(coffee_amount), "currency": str(getattr(settings, "CURRENCY", "RUB"))},
-        }
-    ]
-
-    # создаём платеж
     res = await client.create_payment(
         amount=total_amount,
         currency=str(getattr(settings, "CURRENCY", "RUB")),
         description=build_order_description(settings, order_id=order_id),
         return_url=return_url,
         capture=bool(getattr(settings, "PAYMENT_CAPTURE", True)),
-        idempotence_key=idem,
-        metadata=metadata,
-        notification_url=notification_url,
+        idempotence_key=f"order:{order_id}",
+        metadata={
+            "type": "order",
+            "order_id": str(order_id),
+            "user_id": str(user_id),
+            "cafe_id": str(row["cafe_id"]),
+            "platform_fee": money_str(platform_fee),
+            "coffee_amount": money_str(coffee_amount),
+        },
+        notification_url=None,
         receipt=None,
         transfers=transfers,
     )
@@ -288,19 +332,15 @@ async def create_payment_for_order(
         db.orders.update()
         .where(db.orders.c.id == order_id)
         .values(
-            provider="yookassa",
+            payment_provider="yookassa",
             provider_payment_id=res.payment_id,
             payment_status=str(res.status),
-            pay_url=res.confirmation_url,
-            payment_payload=json.dumps(res.raw, ensure_ascii=False),
-            platform_fee=float(platform_fee),
-            total_with_fee=float(total_amount),
+            payment_confirmation_url=res.confirmation_url,
             updated_at=db.utcnow(),
         )
     )
 
     return res
-
 
 # ----------------------------
 # Webhook verification + processing
