@@ -4,11 +4,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
+import bcrypt  # type: ignore
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from passlib.hash import bcrypt
 from . import db
 
 
@@ -650,6 +650,9 @@ async def get_profile(session: AsyncSession, user_id: int) -> dict:
 # ----------------------------
 # Web panel services (pure, no HTML)
 # ----------------------------
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 def _verify_password(password: str, password_hash: str | None) -> bool:
     if not password_hash:

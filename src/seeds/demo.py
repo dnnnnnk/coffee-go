@@ -22,15 +22,15 @@ except Exception:  # pragma: no cover
 def _hash_password(p: str) -> str:
     """Hash password for seed accounts.
 
-    Tries project helper first; otherwise falls back to passlib bcrypt.
+    Tries project helper first; otherwise falls back to bcrypt.
     """
     if hash_password is not None:
         return hash_password(p)  # type: ignore[misc]
 
-    # Local fallback
-    from passlib.hash import bcrypt  # type: ignore
+    # Local fallback: use bcrypt directly (passlib has issues with bcrypt 4.x)
+    import bcrypt  # type: ignore
 
-    return bcrypt.hash(p)
+    return bcrypt.hashpw(p.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 @dataclass(frozen=True)

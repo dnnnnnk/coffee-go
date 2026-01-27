@@ -21,7 +21,6 @@ python-multipart>=0.0.9,<1.0.0
 itsdangerous>=2.2.0,<3.0.0
 
 # password hashing
-passlib[bcrypt]>=1.7.4,<2.0.0
 bcrypt>=4.1.0,<5.0.0
 
 greenlet>=3.0.0,<4.0.0
