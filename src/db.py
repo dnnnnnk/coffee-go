@@ -265,6 +265,61 @@ order_item_modifiers = Table(
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
+async def web_list_products_with_stoplist(session: AsyncSession, *, cafe_id: int) -> list[dict]:
+    # все товары кофейни + флаг in_stoplist
+    q = (
+        select(
+            products.c.id,
+            products.c.name,
+            products.c.is_active,
+            (stoplist_products.c.id.is_not(None)).label("in_stoplist"),
+        )
+        .select_from(
+            products.outerjoin(
+                stoplist_products,
+                and_(
+                    stoplist_products.c.cafe_id == cafe_id,
+                    stoplist_products.c.product_id == products.c.id,
+                    or_(stoplist_products.c.until_ts.is_(None), stoplist_products.c.until_ts > utcnow()),
+                ),
+            )
+        )
+        .where(products.c.cafe_id == cafe_id)
+        .order_by(products.c.sort.asc(), products.c.id.asc())
+    )
+    rows = (await session.execute(q)).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def web_list_modifiers_with_stoplist(session: AsyncSession, *, cafe_id: int) -> list[dict]:
+    # все модификаторы кофейни (через product) + group_name/product_name + in_stoplist
+    q = (
+        select(
+            modifiers.c.id,
+            modifiers.c.name,
+            modifiers.c.is_active,
+            modifier_groups.c.name.label("group_name"),
+            products.c.name.label("product_name"),
+            (stoplist_modifiers.c.id.is_not(None)).label("in_stoplist"),
+        )
+        .select_from(
+            modifiers
+            .join(modifier_groups, modifier_groups.c.id == modifiers.c.group_id)
+            .join(products, products.c.id == modifier_groups.c.product_id)
+            .outerjoin(
+                stoplist_modifiers,
+                and_(
+                    stoplist_modifiers.c.cafe_id == cafe_id,
+                    stoplist_modifiers.c.modifier_id == modifiers.c.id,
+                    or_(stoplist_modifiers.c.until_ts.is_(None), stoplist_modifiers.c.until_ts > utcnow()),
+                ),
+            )
+        )
+        .where(products.c.cafe_id == cafe_id)
+        .order_by(products.c.id.asc(), modifier_groups.c.sort.asc(), modifiers.c.sort.asc(), modifiers.c.id.asc())
+    )
+    rows = (await session.execute(q)).mappings().all()
+    return [dict(r) for r in rows]
 
 def _apply_sqlite_pragmas(sync_engine: Engine, *, wal: bool, timeout_sec: int, foreign_keys: bool) -> None:
     @event.listens_for(sync_engine, "connect")

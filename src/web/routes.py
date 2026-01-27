@@ -136,7 +136,8 @@ async def stoplist_get(
     settings = get_settings()
 
     async with db.session_scope(settings) as s:
-        data = await services.web_get_stoplist(s, cafe_id=cafe_id)
+        view = await services.web_get_stoplist(s, cafe_id=cafe_id)
+        cafe = await db.get_cafe(s, cafe_id)
 
     return _templates(request).TemplateResponse(
         "stoplist.html",
@@ -144,7 +145,12 @@ async def stoplist_get(
             "request": request,
             "cafe_id": cafe_id,
             "admin_unlocked": is_admin(request),
-            "data": data,
+            "cafe_name": (cafe or {}).get("name"),
+            "products": view["products"],
+            "modifiers": view["modifiers"],
+            "q": None,
+            "flash_message": None,
+            "flash_ok": True,
         },
     )
 
@@ -238,6 +244,8 @@ async def menu_get(
             "request": request,
             "cafe_id": cafe_id,
             "admin_unlocked": True,
-            "menu": menu,
+            "is_admin": is_admin(request),
+            "cafe_name": (menu.get("cafe") or {}).get("name"),
+            "categories": menu.get("categories") or [],
         },
     )

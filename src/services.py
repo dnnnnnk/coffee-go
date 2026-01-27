@@ -750,77 +750,72 @@ async def web_update_order_status(
 
 
 async def web_get_stoplist(session: AsyncSession, *, cafe_id: int) -> dict:
-    """Return stoplist ids for products and modifiers."""
-    qp = select(db.stoplist_products.c.product_id).where(db.stoplist_products.c.cafe_id == cafe_id)
-    qm = select(db.stoplist_modifiers.c.modifier_id).where(db.stoplist_modifiers.c.cafe_id == cafe_id)
+    cafe = await db.get_cafe(session, cafe_id)
+    if not cafe:
+        raise NotFound("Кофейня не найдена.")
 
-    products = (await session.execute(qp)).scalars().all()
-    modifiers = (await session.execute(qm)).scalars().all()
+    products = await db.web_list_products_with_stoplist(session, cafe_id=cafe_id)
+    modifiers = await db.web_list_modifiers_with_stoplist(session, cafe_id=cafe_id)
 
     return {
-        "products": [int(x) for x in products],
-        "modifiers": [int(x) for x in modifiers],
+        "cafe": cafe,
+        "products": products,
+        "modifiers": modifiers,
     }
 
 
-async def web_set_stoplist_product(
-    session: AsyncSession,
-    *,
-    cafe_id: int,
-    product_id: int,
-    enabled: bool,
-) -> None:
-    now = db.utcnow()
+async def web_set_stoplist_product(session: AsyncSession, *, cafe_id: int, product_id: int, enabled: bool) -> None:
+    # verify product belongs to cafe
+    ok = (await session.execute(
+        select(db.products.c.id).where(and_(db.products.c.id == product_id, db.products.c.cafe_id == cafe_id))
+    )).first()
+    if not ok:
+        raise Validation("Товар не принадлежит этой кофейне.")
 
+    now = db.utcnow()
     if enabled:
-        # insert if not exists
-        q = db.stoplist_products.insert().values(
-            cafe_id=cafe_id,
-            product_id=product_id,
-            created_at=now,
-        )
         try:
-            await session.execute(q)
-        except Exception:
-            # ignore duplicates
-            pass
-    else:
-        q = db.stoplist_products.delete().where(
-            and_(
-                db.stoplist_products.c.cafe_id == cafe_id,
-                db.stoplist_products.c.product_id == product_id,
+            await session.execute(
+                db.stoplist_products.insert().values(cafe_id=cafe_id, product_id=product_id, created_at=now)
             )
-        )
-        await session.execute(q)
-
-
-async def web_set_stoplist_modifier(
-    session: AsyncSession,
-    *,
-    cafe_id: int,
-    modifier_id: int,
-    enabled: bool,
-) -> None:
-    now = db.utcnow()
-
-    if enabled:
-        q = db.stoplist_modifiers.insert().values(
-            cafe_id=cafe_id,
-            modifier_id=modifier_id,
-            created_at=now,
-        )
-        try:
-            await session.execute(q)
         except Exception:
             pass
     else:
-        q = db.stoplist_modifiers.delete().where(
-            and_(
-                db.stoplist_modifiers.c.cafe_id == cafe_id,
-                db.stoplist_modifiers.c.modifier_id == modifier_id,
+        await session.execute(
+            db.stoplist_products.delete().where(
+                and_(db.stoplist_products.c.cafe_id == cafe_id, db.stoplist_products.c.product_id == product_id)
             )
         )
-        await session.execute(q)
+
+
+async def web_set_stoplist_modifier(session: AsyncSession, *, cafe_id: int, modifier_id: int, enabled: bool) -> None:
+    # verify modifier belongs to cafe via joins
+    ok = (await session.execute(
+        select(db.modifiers.c.id)
+        .select_from(
+            db.modifiers
+            .join(db.modifier_groups, db.modifier_groups.c.id == db.modifiers.c.group_id)
+            .join(db.products, db.products.c.id == db.modifier_groups.c.product_id)
+        )
+        .where(and_(db.modifiers.c.id == modifier_id, db.products.c.cafe_id == cafe_id))
+    )).first()
+    if not ok:
+        raise Validation("Модификатор не принадлежит этой кофейне.")
+
+    now = db.utcnow()
+    if enabled:
+        try:
+            await session.execute(
+                db.stoplist_modifiers.insert().values(cafe_id=cafe_id, modifier_id=modifier_id, created_at=now)
+            )
+        except Exception:
+            pass
+    else:
+        await session.execute(
+            db.stoplist_modifiers.delete().where(
+                and_(db.stoplist_modifiers.c.cafe_id == cafe_id, db.stoplist_modifiers.c.modifier_id == modifier_id)
+            )
+        )
 
 
 async def web_menu_read(session: AsyncSession, *, cafe_id: int) -> dict:
