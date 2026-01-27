@@ -1,0 +1,39 @@
+{% extends "_base.html" %}
+{% set active_page = "admin" %}
+
+{% block title %}Админ{% endblock %}
+
+{% block content %}
+  <h1>Админ-разблокировка</h1>
+
+  {% if flash_message %}
+    <div class="flash {{ 'ok' if flash_ok else 'bad' }}">{{ flash_message }}</div>
+  {% endif %}
+
+  {% if admin_unlocked %}
+    <div class="flash ok">✅ Админ доступ активен</div>
+    <form method="post" action="/admin/unlock" style="margin-top:12px">
+      <input type="hidden" name="action" value="lock" />
+      <button class="btn bad" type="submit">Заблокировать</button>
+    </form>
+  {% else %}
+    <div class="hint" style="margin-bottom:10px">
+      Введи админ-пароль кофейни, чтобы открыть доступ к меню/CRUD.
+    </div>
+
+    <form method="post" action="/admin/unlock" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <input
+        type="password"
+        name="admin_password"
+        placeholder="Админ-пароль"
+        required
+        style="background:#111;border:1px solid #2a2a2a;color:#eee;padding:8px 10px;border-radius:10px"
+      />
+      <button class="btn ok" type="submit">Открыть админку</button>
+    </form>
+  {% endif %}
+
+  <div class="hint" style="margin-top:12px">
+    {{ cafe_name or ('Кофейня #' ~ cafe_id) }}
+  </div>
+{% endblock %}

@@ -25,10 +25,9 @@ from fastapi.responses import RedirectResponse
 
 @router.get("/", include_in_schema=False)
 async def root(request: Request) -> RedirectResponse:
-    # if logged in -> dashboard, else -> login
     if get_cafe_id(request) is not None:
-        return _redirect("/dashboard")
-    return RedirectResponse(url="/orders", status_code=302)
+        return _redirect("/orders")
+    return RedirectResponse(url="/login", status_code=302)
 
 def _templates(request: Request):
     return request.app.state.templates
@@ -42,7 +41,6 @@ def _redirect(url: str) -> RedirectResponse:
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_get(request: Request) -> HTMLResponse:
-    # already logged in -> dashboard
     if get_cafe_id(request) is not None:
         return _redirect("/orders")
 
@@ -78,41 +76,13 @@ async def login_post(
         )
 
     set_session(request, cafe_id)
-    return _redirect("/dashboard")
+    return _redirect("/orders")
 
 
 @router.post("/logout")
 async def logout_post(request: Request) -> RedirectResponse:
     clear_session(request)
     return _redirect("/login")
-
-
-@router.get("/dashboard", response_class=HTMLResponse)
-async def dashboard_get(
-    request: Request,
-    cafe_id: int = Depends(login_required()),
-) -> HTMLResponse:
-    settings = get_settings()
-
-    # optional lightweight stats (can be extended later)
-    stats: dict[str, Any] = {}
-    try:
-        async with db.session_scope(settings) as s:
-            stats = await services.web_dashboard_stats(s, cafe_id=cafe_id)
-    except Exception:
-        # do not break dashboard if stats fail
-        stats = {}
-
-    return _templates(request).TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
-            "cafe_id": cafe_id,
-            "is_admin": is_admin(request),
-            "stats": stats,
-            "admin_error": None,
-        },
-    )
 
 
 @router.get("/orders", response_class=HTMLResponse)
@@ -131,7 +101,7 @@ async def orders_get(
         {
             "request": request,
             "cafe_id": cafe_id,
-            "is_admin": is_admin(request),
+            "admin_unlocked": is_admin(request),
             "orders": orders,
             "status_filter": status,
         },
@@ -173,7 +143,7 @@ async def stoplist_get(
         {
             "request": request,
             "cafe_id": cafe_id,
-            "is_admin": is_admin(request),
+            "admin_unlocked": is_admin(request),
             "data": data,
         },
     )
@@ -212,26 +182,14 @@ async def admin_unlock_get(
     request: Request,
     cafe_id: int = Depends(login_required()),
 ) -> HTMLResponse:
-    # We don't have a separate unlock template.
-    # Show dashboard with unlock form hint.
-    settings = get_settings()
-
-    stats: dict[str, Any] = {}
-    try:
-        async with db.session_scope(settings) as s:
-            stats = await services.web_dashboard_stats(s, cafe_id=cafe_id)
-    except Exception:
-        stats = {}
-
     return _templates(request).TemplateResponse(
-        "dashboard.html",
+        "admin_unlock.html",
         {
             "request": request,
             "cafe_id": cafe_id,
-            "is_admin": is_admin(request),
-            "stats": stats,
-            "admin_error": None,
-            "show_admin_unlock": True,
+            "admin_unlocked": is_admin(request),
+            "flash_message": None,
+            "flash_ok": True,
         },
     )
 
@@ -249,25 +207,16 @@ async def admin_unlock_post(
 
     if ok:
         set_admin(request, True, ttl_min=int(settings.WEB_ADMIN_UNLOCK_TTL_MIN))
-        return _redirect("/dashboard")
-
-    # show dashboard with error
-    stats: dict[str, Any] = {}
-    try:
-        async with db.session_scope(settings) as s:
-            stats = await services.web_dashboard_stats(s, cafe_id=cafe_id)
-    except Exception:
-        stats = {}
+        return _redirect("/orders")
 
     return _templates(request).TemplateResponse(
-        "dashboard.html",
+        "admin_unlock.html",
         {
             "request": request,
             "cafe_id": cafe_id,
-            "is_admin": is_admin(request),
-            "stats": stats,
-            "admin_error": "Неверный админ-пароль.",
-            "show_admin_unlock": True,
+            "admin_unlocked": False,
+            "flash_message": "Неверный админ-пароль.",
+            "flash_ok": False,
         },
         status_code=403,
     )
@@ -288,7 +237,7 @@ async def menu_get(
         {
             "request": request,
             "cafe_id": cafe_id,
-            "is_admin": True,
+            "admin_unlocked": True,
             "menu": menu,
         },
     )
