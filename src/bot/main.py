@@ -14,6 +14,7 @@ from src.db import get_engine, init_db, session_scope
 from src.bot.handlers import router as main_router
 from src import payments
 from src import services
+from src.seeds.demo import seed_minimal_demo_data
 
 logger = logging.getLogger("easycoffee")
 
@@ -114,7 +115,7 @@ async def main() -> None:
     # автосид для локального теста: если БД пустая — добавим минимальные данные
     if settings.ENV in {"dev", "test"}:
         async with session_scope(settings) as s:
-            await services.seed_minimal_demo_data(s)
+            await seed_minimal_demo_data(s)
 
     engine = get_engine(settings)
     try:
