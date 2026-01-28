@@ -27,7 +27,43 @@
     .toolbar .left{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
     .toolbar select,.toolbar input{background:#111;border:1px solid #2a2a2a;color:#eee;padding:8px 10px;border-radius:10px}
     .hint{color:#aaa;font-size:13px}
+    /* global form controls */
+    input, select, textarea{
+      background:#111;
+      border:1px solid #2a2a2a;
+      color:#eee;
+      padding:8px 10px;
+      border-radius:10px;
+      outline:none;
+      box-sizing:border-box;
+    }
 
+    input::placeholder, textarea::placeholder{
+      color:#777;
+    }
+
+    input:focus, select:focus, textarea:focus{
+      border-color:#3a3a3a;
+      box-shadow:0 0 0 3px rgba(255,255,255,0.04);
+    }
+
+    /* checkbox/radio не трогаем этим правилом */
+    input[type="checkbox"], input[type="radio"]{
+      padding:0;
+      border-radius:4px;
+      width:16px;
+      height:16px;
+    }
+
+    /* если браузер автозаполняет белым */
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus,
+    textarea:-webkit-autofill{
+      -webkit-text-fill-color:#eee;
+      transition: background-color 9999s ease-in-out 0s;
+      box-shadow:0 0 0px 1000px #111 inset;
+    }
     table{width:100%;border-collapse:collapse;background:#0f0f0f;border:1px solid #222;border-radius:14px;overflow:hidden}
     th,td{padding:10px 10px;border-bottom:1px solid #1e1e1e;vertical-align:top}
     th{background:#111;color:#bbb;font-weight:600;text-align:left;font-size:13px}

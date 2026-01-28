@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 import bcrypt  # type: ignore
-
 from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1238,3 +1237,64 @@ def format_receipt(receipt: dict) -> str:
 
 
     return "\n".join(lines)
+
+
+
+async def web_menu_assert_product_belongs_to_cafe(session: AsyncSession, *, cafe_id: int, product_id: int) -> None:
+    q = select(db.products.c.id).where(and_(db.products.c.id == product_id, db.products.c.cafe_id == cafe_id))
+    if (await session.execute(q)).first() is None:
+        raise Validation("Товар не принадлежит этой кофейне.")
+
+async def web_menu_assert_group_belongs_to_cafe(session: AsyncSession, *, cafe_id: int, group_id: int) -> None:
+    q = (
+        select(db.modifier_groups.c.id)
+        .select_from(db.modifier_groups.join(db.products, db.products.c.id == db.modifier_groups.c.product_id))
+        .where(and_(db.modifier_groups.c.id == group_id, db.products.c.cafe_id == cafe_id))
+    )
+    if (await session.execute(q)).first() is None:
+        raise Validation("Группа не принадлежит этой кофейне.")
+
+async def web_menu_assert_modifier_belongs_to_cafe(session: AsyncSession, *, cafe_id: int, modifier_id: int) -> None:
+    q = (
+        select(db.modifiers.c.id)
+        .select_from(
+            db.modifiers
+            .join(db.modifier_groups, db.modifier_groups.c.id == db.modifiers.c.group_id)
+            .join(db.products, db.products.c.id == db.modifier_groups.c.product_id)
+        )
+        .where(and_(db.modifiers.c.id == modifier_id, db.products.c.cafe_id == cafe_id))
+    )
+    if (await session.execute(q)).first() is None:
+        raise Validation("Модификатор не принадлежит этой кофейне.")
+
+async def web_menu_crud_delete_category(session: AsyncSession, *, cafe_id: int, category_id: int) -> bool:
+    # CASCADE удалит products? у products ondelete=SET NULL, так что лучше запретить если есть товары
+    q = select(func.count()).select_from(db.products).where(
+        and_(db.products.c.cafe_id == cafe_id, db.products.c.category_id == category_id)
+    )
+    cnt = int((await session.execute(q)).scalar_one())
+    if cnt > 0:
+        raise Validation("Нельзя удалить категорию: в ней есть товары. Сначала перенеси/удали товары.")
+
+    res = await session.execute(
+        db.categories.delete().where(and_(db.categories.c.id == category_id, db.categories.c.cafe_id == cafe_id))
+    )
+    return bool(res.rowcount and res.rowcount > 0)
+
+async def web_menu_crud_delete_product(session: AsyncSession, *, cafe_id: int, product_id: int) -> bool:
+    # RESTRICT может мешать, если есть order_items; тогда лучше "soft delete": is_active=False
+    # В v1 сделаем мягко:
+    return await web_menu_crud_update_product(session, cafe_id=cafe_id, product_id=product_id, is_active=False)
+
+async def web_menu_crud_delete_modifier_group(session: AsyncSession, *, cafe_id: int, group_id: int) -> bool:
+    await web_menu_assert_group_belongs_to_cafe(session, cafe_id=cafe_id, group_id=group_id)
+    # мягко
+    q = db.modifier_groups.update().where(db.modifier_groups.c.id == group_id).values(is_active=False, updated_at=db.utcnow())
+    res = await session.execute(q)
+    return bool(res.rowcount and res.rowcount > 0)
+
+async def web_menu_crud_delete_modifier(session: AsyncSession, *, cafe_id: int, modifier_id: int) -> bool:
+    await web_menu_assert_modifier_belongs_to_cafe(session, cafe_id=cafe_id, modifier_id=modifier_id)
+    q = db.modifiers.update().where(db.modifiers.c.id == modifier_id).values(is_active=False, updated_at=db.utcnow())
+    res = await session.execute(q)
+    return bool(res.rowcount and res.rowcount > 0)

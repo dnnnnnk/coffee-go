@@ -6,12 +6,23 @@
 {% block content %}
   <h1>Меню</h1>
 
-  <div class="hint" style="margin-bottom:14px">
-    Пока только просмотр (read-only)
-  </div>
-
   {% if is_admin %}
-    <div class="flash ok">✅ Админ-разблокировка активна. Скоро тут появится CRUD.</div>
+    <div class="flash ok">✅ Админ-разблокировка активна. CRUD включён.</div>
+
+    <div class="card" style="margin: 12px 0 14px 0; padding:0">
+      <div style="padding:14px 16px;border-bottom:1px solid #222;background:#111;font-weight:700">Создать категорию</div>
+      <div style="padding:14px 16px">
+        <form method="post" action="/menu/category/create" style="display:flex;gap:10px;flex-wrap:wrap;margin:0;align-items:center">
+          <input name="name" placeholder="Название" required />
+          <input name="sort" type="number" value="0" style="width:120px" />
+          <select name="is_active">
+            <option value="1" selected>active</option>
+            <option value="0">hidden</option>
+          </select>
+          <button class="btn" type="submit">Добавить</button>
+        </form>
+      </div>
+    </div>
   {% else %}
     <div class="flash bad">⚠️ Для редактирования меню нужна админ-разблокировка.</div>
   {% endif %}
@@ -38,14 +49,48 @@
               <div style="font-weight:700">{{ cat.name }}</div>
               <div class="muted">Категория #{{ cat.id }}</div>
             </div>
-            {% if cat.is_active %}
-              <span class="status s-paid">active</span>
-            {% else %}
-              <span class="status s-cancel">hidden</span>
-            {% endif %}
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+              {% if is_admin %}
+                <form method="post" action="/menu/category/{{ cat.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
+                  <input name="name" value="{{ cat.name }}" style="width:220px" />
+                  <input name="sort" type="number" value="{{ cat.sort or 0 }}" style="width:90px" />
+                  <select name="is_active">
+                    <option value="1" {% if cat.is_active %}selected{% endif %}>active</option>
+                    <option value="0" {% if not cat.is_active %}selected{% endif %}>hidden</option>
+                  </select>
+                  <button class="btn small" type="submit">Сохранить</button>
+                </form>
+
+                <form method="post" action="/menu/category/{{ cat.id }}/delete" style="margin:0">
+                  <button class="btn small bad" type="submit" onclick="return confirm('Удалить категорию? (может быть запрещено, если есть товары)')">Удалить</button>
+                </form>
+              {% endif %}
+
+              {% if cat.is_active %}
+                <span class="status s-paid">active</span>
+              {% else %}
+                <span class="status s-cancel">hidden</span>
+              {% endif %}
+            </div>
           </div>
 
           <div style="padding:14px 16px">
+            {% if is_admin %}
+              <div class="flash" style="margin-bottom:12px">
+                <form method="post" action="/menu/product/create" style="display:flex;gap:10px;flex-wrap:wrap;margin:0;align-items:center">
+                  <input type="hidden" name="category_id" value="{{ cat.id }}" />
+                  <input name="name" placeholder="Новый товар" required />
+                  <input name="base_price" placeholder="Цена, напр 210.00" required style="width:160px" />
+                  <input name="description" placeholder="Описание (опц.)" style="min-width:240px;flex:1" />
+                  <input name="sort" type="number" value="0" style="width:90px" />
+                  <select name="is_active">
+                    <option value="1" selected>active</option>
+                    <option value="0">hidden</option>
+                  </select>
+                  <button class="btn" type="submit">Добавить</button>
+                </form>
+              </div>
+            {% endif %}
             {% if not cat.products or cat.products|length == 0 %}
               <div class="muted">В этой категории пока нет товаров</div>
             {% else %}
@@ -67,6 +112,44 @@
                           <div class="muted" style="margin-top:4px">{{ p.description }}</div>
                         {% endif %}
                         <div class="muted" style="margin-top:6px">Товар #{{ p.id }}</div>
+
+                        {% if is_admin %}
+                          <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+                            <form method="post" action="/menu/product/{{ p.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
+                              <input name="name" value="{{ p.name }}" style="width:220px" />
+                              <input name="base_price" value="{{ '%.2f'|format(p.base_price) }}" style="width:120px" />
+                              <input name="sort" type="number" value="{{ p.sort or 0 }}" style="width:90px" />
+                              <select name="is_active">
+                                <option value="1" {% if p.is_active %}selected{% endif %}>active</option>
+                                <option value="0" {% if not p.is_active %}selected{% endif %}>hidden</option>
+                              </select>
+                              <button class="btn small" type="submit">OK</button>
+                            </form>
+
+                            <form method="post" action="/menu/product/{{ p.id }}/delete" style="margin:0">
+                              <button class="btn small bad" type="submit" onclick="return confirm('Скрыть товар?')">Скрыть</button>
+                            </form>
+                          </div>
+
+                          <div style="margin-top:10px">
+                            <form method="post" action="/menu/group/create" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
+                              <input type="hidden" name="product_id" value="{{ p.id }}" />
+                              <input name="name" placeholder="Новая группа (напр. Молоко)" required style="width:240px" />
+                              <select name="required">
+                                <option value="0" selected>optional</option>
+                                <option value="1">required</option>
+                              </select>
+                              <input name="min_select" type="number" value="0" style="width:90px" />
+                              <input name="max_select" type="number" value="1" style="width:90px" />
+                              <input name="sort" type="number" value="0" style="width:90px" />
+                              <select name="is_active">
+                                <option value="1" selected>active</option>
+                                <option value="0">hidden</option>
+                              </select>
+                              <button class="btn small" type="submit">+ Группа</button>
+                            </form>
+                          </div>
+                        {% endif %}
                       </td>
                       <td>
                         <b>{{ "%.2f"|format(p.base_price) }} ₽</b>
@@ -81,32 +164,115 @@
                       <td>
                         {% if p.modifier_groups and p.modifier_groups|length > 0 %}
                           <div class="items">
-                            <ul style="margin:0;padding-left:16px">
+                            <div style="display:flex;flex-direction:column;gap:12px">
                               {% for g in p.modifier_groups %}
-                                <li data-search="{{ ((g.name or '') ~ ' ' ~ (p.name or ''))|lower }}">
-                                  <b>{{ g.name }}</b>
-                                  <span class="muted">(выбор: {{ g.min_select }}…{{ g.max_select }}{% if g.required %}, обяз.{% endif %})</span>
+                                <div class="card" style="padding:12px 12px" data-search="{{ ((g.name or '') ~ ' ' ~ (p.name or ''))|lower }}">
+                                  <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+                                    <div>
+                                      <b>{{ g.name }}</b>
+                                      <div class="muted" style="margin-top:4px">
+                                        выбор: {{ g.min_select }}…{{ g.max_select }}{% if g.required %}, обяз.{% endif %}
+                                        · группа #{{ g.id }}
+                                      </div>
+                                    </div>
+                                    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+                                      {% if is_admin %}
+                                        <form method="post" action="/menu/group/{{ g.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
+                                          <input name="name" value="{{ g.name }}" style="width:200px" />
+                                          <select name="required">
+                                            <option value="0" {% if not g.required %}selected{% endif %}>optional</option>
+                                            <option value="1" {% if g.required %}selected{% endif %}>required</option>
+                                          </select>
+                                          <input name="min_select" type="number" value="{{ g.min_select }}" style="width:80px" />
+                                          <input name="max_select" type="number" value="{{ g.max_select }}" style="width:80px" />
+                                          <input name="sort" type="number" value="{{ g.sort or 0 }}" style="width:80px" />
+                                          <select name="is_active">
+                                            <option value="1" {% if g.is_active %}selected{% endif %}>active</option>
+                                            <option value="0" {% if not g.is_active %}selected{% endif %}>hidden</option>
+                                          </select>
+                                          <button class="btn small" type="submit">OK</button>
+                                        </form>
+
+                                        <form method="post" action="/menu/group/{{ g.id }}/delete" style="margin:0">
+                                          <button class="btn small bad" type="submit" onclick="return confirm('Скрыть группу?')">Скрыть</button>
+                                        </form>
+                                      {% endif %}
+
+                                      {% if g.is_active %}
+                                        <span class="status s-paid">active</span>
+                                      {% else %}
+                                        <span class="status s-cancel">hidden</span>
+                                      {% endif %}
+                                    </div>
+                                  </div>
+
+                                  {% if is_admin %}
+                                    <div style="margin-top:10px">
+                                      <form method="post" action="/menu/modifier/create" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
+                                        <input type="hidden" name="group_id" value="{{ g.id }}" />
+                                        <input name="name" placeholder="Новый модификатор" required style="width:220px" />
+                                        <input name="price_delta" placeholder="delta (напр 40.00)" value="0" style="width:140px" />
+                                        <input name="sort" type="number" value="0" style="width:80px" />
+                                        <select name="is_active">
+                                          <option value="1" selected>active</option>
+                                          <option value="0">hidden</option>
+                                        </select>
+                                        <button class="btn small" type="submit">+ Мод</button>
+                                      </form>
+                                    </div>
+                                  {% endif %}
+
                                   {% if g.modifiers and g.modifiers|length > 0 %}
-                                    <div class="muted" style="margin-top:6px">
-                                      {% for m in g.modifiers %}
-                                        <span data-search="{{ (m.name or '')|lower }}">
-                                          {{ m.name }}
-                                          {% if m.price_delta and m.price_delta != 0 %}
-                                            <span class="muted">(+{{ "%.2f"|format(m.price_delta) }} ₽)</span>
-                                          {% else %}
-                                            <span class="muted">(+0 ₽)</span>
-                                          {% endif %}
-                                          {% if not m.is_active %}<span class="muted">(hidden)</span>{% endif %}
-                                        </span>
-                                        {% if not loop.last %}<span class="muted"> · </span>{% endif %}
-                                      {% endfor %}
+                                    <div class="muted" style="margin-top:10px">
+                                      <div style="display:flex;flex-direction:column;gap:8px">
+                                        {% for m in g.modifiers %}
+                                          <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap" data-search="{{ (m.name or '')|lower }}">
+                                            <div>
+                                              <b>{{ m.name }}</b>
+                                              <span class="muted">
+                                                {% if m.price_delta and m.price_delta != 0 %}
+                                                  (+{{ "%.2f"|format(m.price_delta) }} ₽)
+                                                {% else %}
+                                                  (+0 ₽)
+                                                {% endif %}
+                                                · мод #{{ m.id }}
+                                              </span>
+                                            </div>
+
+                                            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+                                              {% if is_admin %}
+                                                <form method="post" action="/menu/modifier/{{ m.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
+                                                  <input name="name" value="{{ m.name }}" style="width:200px" />
+                                                  <input name="price_delta" value="{{ '%.2f'|format(m.price_delta or 0) }}" style="width:120px" />
+                                                  <input name="sort" type="number" value="{{ m.sort or 0 }}" style="width:80px" />
+                                                  <select name="is_active">
+                                                    <option value="1" {% if m.is_active %}selected{% endif %}>active</option>
+                                                    <option value="0" {% if not m.is_active %}selected{% endif %}>hidden</option>
+                                                  </select>
+                                                  <button class="btn small" type="submit">OK</button>
+                                                </form>
+
+                                                <form method="post" action="/menu/modifier/{{ m.id }}/delete" style="margin:0">
+                                                  <button class="btn small bad" type="submit" onclick="return confirm('Скрыть модификатор?')">Скрыть</button>
+                                                </form>
+                                              {% endif %}
+
+                                              {% if m.is_active %}
+                                                <span class="status s-paid">active</span>
+                                              {% else %}
+                                                <span class="status s-cancel">hidden</span>
+                                              {% endif %}
+                                            </div>
+                                          </div>
+                                        {% endfor %}
+                                      </div>
                                     </div>
                                   {% else %}
-                                    <div class="muted" style="margin-top:6px">Нет модификаторов</div>
+                                    <div class="muted" style="margin-top:10px">Нет модификаторов</div>
                                   {% endif %}
-                                </li>
+                                </div>
                               {% endfor %}
-                            </ul>
+                            </div>
                           </div>
                         {% else %}
                           <div class="muted">Без модификаторов</div>

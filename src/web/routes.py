@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Optional
+from fastapi import HTTPException
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -249,3 +251,252 @@ async def menu_get(
             "categories": menu.get("categories") or [],
         },
     )
+
+
+@router.post("/menu/category/create")
+async def menu_category_create(
+    request: Request,
+    name: str = Form(...),
+    sort: int = Form(0),
+    is_active: int = Form(1),
+    cafe_id: int = Depends(admin_required()),
+) -> RedirectResponse:
+    settings = get_settings()
+    async with db.session_scope(settings) as s:
+        await services.web_menu_crud_create_category(
+            s,
+            cafe_id=cafe_id,
+            name=name.strip(),
+            sort=int(sort),
+            is_active=bool(int(is_active)),
+        )
+    return _redirect("/menu")
+
+
+@router.post("/menu/category/{category_id}/update")
+async def menu_category_update(
+    request: Request,
+    category_id: int,
+    name: str = Form(None),
+    sort: int = Form(None),
+    is_active: int = Form(None),
+    cafe_id: int = Depends(admin_required()),
+) -> RedirectResponse:
+    settings = get_settings()
+    async with db.session_scope(settings) as s:
+        await services.web_menu_crud_update_category(
+            s,
+            cafe_id=cafe_id,
+            category_id=category_id,
+            name=(name.strip() if name is not None else None),
+            sort=(int(sort) if sort is not None else None),
+            is_active=(bool(int(is_active)) if is_active is not None else None),
+        )
+    return _redirect("/menu")
+
+
+@router.post("/menu/category/{category_id}/delete")
+async def menu_category_delete(
+    request: Request,
+    category_id: int,
+    cafe_id: int = Depends(admin_required()),
+) -> RedirectResponse:
+    settings = get_settings()
+    async with db.session_scope(settings) as s:
+        await services.web_menu_crud_delete_category(s, cafe_id=cafe_id, category_id=category_id)
+    return _redirect("/menu")
+
+
+@router.post("/menu/product/create")
+async def menu_product_create(
+    request: Request,
+    category_id: int = Form(...),
+    name: str = Form(...),
+    base_price: str = Form(...),
+    description: str = Form(""),
+    sort: int = Form(0),
+    is_active: int = Form(1),
+    cafe_id: int = Depends(admin_required()),
+) -> RedirectResponse:
+    settings = get_settings()
+    async with db.session_scope(settings) as s:
+        await services.web_menu_crud_create_product(
+            s,
+            cafe_id=cafe_id,
+            category_id=int(category_id),
+            name=name.strip(),
+            base_price=Decimal(base_price),
+            description=(description.strip() or None),
+            sort=int(sort),
+            is_active=bool(int(is_active)),
+        )
+    return _redirect("/menu")
+
+
+@router.post("/menu/product/{product_id}/update")
+async def menu_product_update(
+    request: Request,
+    product_id: int,
+    name: str = Form(None),
+    base_price: str = Form(None),
+    description: str = Form(None),
+    category_id: int = Form(None),
+    sort: int = Form(None),
+    is_active: int = Form(None),
+    cafe_id: int = Depends(admin_required()),
+) -> RedirectResponse:
+    settings = get_settings()
+    async with db.session_scope(settings) as s:
+        await services.web_menu_crud_update_product(
+            s,
+            cafe_id=cafe_id,
+            product_id=product_id,
+            name=(name.strip() if name is not None else None),
+            description=((description.strip() or None) if description is not None else None),
+            base_price=(Decimal(base_price) if base_price is not None and base_price != "" else None),
+            category_id=(int(category_id) if category_id is not None else None),
+            sort=(int(sort) if sort is not None else None),
+            is_active=(bool(int(is_active)) if is_active is not None else None),
+        )
+    return _redirect("/menu")
+
+
+@router.post("/menu/product/{product_id}/delete")
+async def menu_product_delete(
+    request: Request,
+    product_id: int,
+    cafe_id: int = Depends(admin_required()),
+) -> RedirectResponse:
+    settings = get_settings()
+    async with db.session_scope(settings) as s:
+        await services.web_menu_crud_delete_product(s, cafe_id=cafe_id, product_id=product_id)
+    return _redirect("/menu")
+
+
+@router.post("/menu/group/create")
+async def menu_group_create(
+    request: Request,
+    product_id: int = Form(...),
+    name: str = Form(...),
+    required: int = Form(0),
+    min_select: int = Form(0),
+    max_select: int = Form(1),
+    sort: int = Form(0),
+    is_active: int = Form(1),
+    cafe_id: int = Depends(admin_required()),
+) -> RedirectResponse:
+    settings = get_settings()
+    async with db.session_scope(settings) as s:
+        # защита: группа только для продукта этой кофейни
+        await services.web_menu_assert_product_belongs_to_cafe(s, cafe_id=cafe_id, product_id=int(product_id))
+        await services.web_menu_crud_create_modifier_group(
+            s,
+            product_id=int(product_id),
+            name=name.strip(),
+            required=bool(int(required)),
+            min_select=int(min_select),
+            max_select=int(max_select),
+            sort=int(sort),
+            is_active=bool(int(is_active)),
+        )
+    return _redirect("/menu")
+
+
+@router.post("/menu/group/{group_id}/update")
+async def menu_group_update(
+    request: Request,
+    group_id: int,
+    name: str = Form(None),
+    required: int = Form(None),
+    min_select: int = Form(None),
+    max_select: int = Form(None),
+    sort: int = Form(None),
+    is_active: int = Form(None),
+    cafe_id: int = Depends(admin_required()),
+) -> RedirectResponse:
+    settings = get_settings()
+    async with db.session_scope(settings) as s:
+        await services.web_menu_assert_group_belongs_to_cafe(s, cafe_id=cafe_id, group_id=group_id)
+        await services.web_menu_crud_update_modifier_group(
+            s,
+            group_id=group_id,
+            name=(name.strip() if name is not None else None),
+            required=(bool(int(required)) if required is not None else None),
+            min_select=(int(min_select) if min_select is not None else None),
+            max_select=(int(max_select) if max_select is not None else None),
+            sort=(int(sort) if sort is not None else None),
+            is_active=(bool(int(is_active)) if is_active is not None else None),
+        )
+    return _redirect("/menu")
+
+
+@router.post("/menu/group/{group_id}/delete")
+async def menu_group_delete(
+    request: Request,
+    group_id: int,
+    cafe_id: int = Depends(admin_required()),
+) -> RedirectResponse:
+    settings = get_settings()
+    async with db.session_scope(settings) as s:
+        await services.web_menu_crud_delete_modifier_group(s, cafe_id=cafe_id, group_id=group_id)
+    return _redirect("/menu")
+
+
+@router.post("/menu/modifier/create")
+async def menu_modifier_create(
+    request: Request,
+    group_id: int = Form(...),
+    name: str = Form(...),
+    price_delta: str = Form("0"),
+    sort: int = Form(0),
+    is_active: int = Form(1),
+    cafe_id: int = Depends(admin_required()),
+) -> RedirectResponse:
+    settings = get_settings()
+    async with db.session_scope(settings) as s:
+        await services.web_menu_assert_group_belongs_to_cafe(s, cafe_id=cafe_id, group_id=int(group_id))
+        await services.web_menu_crud_create_modifier(
+            s,
+            group_id=int(group_id),
+            name=name.strip(),
+            price_delta=Decimal(price_delta),
+            sort=int(sort),
+            is_active=bool(int(is_active)),
+        )
+    return _redirect("/menu")
+
+
+@router.post("/menu/modifier/{modifier_id}/update")
+async def menu_modifier_update(
+    request: Request,
+    modifier_id: int,
+    name: str = Form(None),
+    price_delta: str = Form(None),
+    sort: int = Form(None),
+    is_active: int = Form(None),
+    cafe_id: int = Depends(admin_required()),
+) -> RedirectResponse:
+    settings = get_settings()
+    async with db.session_scope(settings) as s:
+        await services.web_menu_assert_modifier_belongs_to_cafe(s, cafe_id=cafe_id, modifier_id=modifier_id)
+        await services.web_menu_crud_update_modifier(
+            s,
+            modifier_id=modifier_id,
+            name=(name.strip() if name is not None else None),
+            price_delta=(Decimal(price_delta) if price_delta is not None and price_delta != "" else None),
+            sort=(int(sort) if sort is not None else None),
+            is_active=(bool(int(is_active)) if is_active is not None else None),
+        )
+    return _redirect("/menu")
+
+
+@router.post("/menu/modifier/{modifier_id}/delete")
+async def menu_modifier_delete(
+    request: Request,
+    modifier_id: int,
+    cafe_id: int = Depends(admin_required()),
+) -> RedirectResponse:
+    settings = get_settings()
+    async with db.session_scope(settings) as s:
+        await services.web_menu_crud_delete_modifier(s, cafe_id=cafe_id, modifier_id=modifier_id)
+    return _redirect("/menu")
