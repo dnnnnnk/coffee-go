@@ -1,5 +1,33 @@
 {% extends "_base.html" %}
+
 {% set active_page = 'menu' %}
+
+{# allow passing either `categories` directly or `menu` dict #}
+{% if categories is not defined %}
+  {% if menu is defined %}
+    {% if menu is mapping %}
+      {% set categories = menu.get('categories', []) %}
+    {% else %}
+      {% set categories = menu.categories %}
+    {% endif %}
+  {% else %}
+    {% set categories = [] %}
+  {% endif %}
+{% endif %}
+
+{% if cafe_name is not defined %}
+  {% if menu is defined %}
+    {% if menu is mapping and menu.get('cafe') %}
+      {% set cafe_name = menu.get('cafe', {}).get('name') %}
+    {% elif menu.cafe is defined %}
+      {% set cafe_name = menu.cafe.name %}
+    {% else %}
+      {% set cafe_name = None %}
+    {% endif %}
+  {% else %}
+    {% set cafe_name = None %}
+  {% endif %}
+{% endif %}
 
 {% block title %}Меню{% endblock %}
 
@@ -49,6 +77,8 @@
       <div class="hint">Меню пустое. Добавь данные через seed или админку.</div>
     {% else %}
       {% for cat in categories %}
+        {% set cat_active = (cat.is_active if cat.is_active is defined else true) %}
+        {% set cat_sort = (cat.sort if cat.sort is defined else 0) %}
         <div class="card" style="padding:0" data-search="{{ (cat.name or '')|lower }}">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid #222;background:#111">
             <div>
@@ -59,10 +89,10 @@
               {% if _is_admin %}
                 <form method="post" action="/menu/category/{{ cat.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
                   <input name="name" value="{{ cat.name }}" style="width:220px" />
-                  <input name="sort" type="number" value="{{ cat.sort or 0 }}" style="width:90px" />
+                  <input name="sort" type="number" value="{{ cat_sort }}" style="width:90px" />
                   <select name="is_active">
-                    <option value="1" {% if cat.is_active %}selected{% endif %}>active</option>
-                    <option value="0" {% if not cat.is_active %}selected{% endif %}>hidden</option>
+                    <option value="1" {% if cat_active %}selected{% endif %}>active</option>
+                    <option value="0" {% if not cat_active %}selected{% endif %}>hidden</option>
                   </select>
                   <button class="btn small" type="submit">Сохранить</button>
                 </form>
@@ -72,7 +102,7 @@
                 </form>
               {% endif %}
 
-              {% if cat.is_active %}
+              {% if cat_active %}
                 <span class="status s-paid">active</span>
               {% else %}
                 <span class="status s-cancel">hidden</span>
@@ -111,6 +141,8 @@
                 </thead>
                 <tbody>
                   {% for p in cat.products %}
+                    {% set p_active = (p.is_active if p.is_active is defined else true) %}
+                    {% set p_sort = (p.sort if p.sort is defined else 0) %}
                     <tr class="row" data-search="{{ (cat.name ~ ' ' ~ (p.name or '') ~ ' ' ~ (p.description or ''))|lower }}">
                       <td>
                         <div style="font-weight:700">{{ p.name }}</div>
@@ -124,10 +156,10 @@
                             <form method="post" action="/menu/product/{{ p.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
                               <input name="name" value="{{ p.name }}" style="width:220px" />
                               <input name="base_price" value="{{ '%.2f'|format(p.base_price) }}" style="width:120px" />
-                              <input name="sort" type="number" value="{{ p.sort or 0 }}" style="width:90px" />
+                              <input name="sort" type="number" value="{{ p_sort }}" style="width:90px" />
                               <select name="is_active">
-                                <option value="1" {% if p.is_active %}selected{% endif %}>active</option>
-                                <option value="0" {% if not p.is_active %}selected{% endif %}>hidden</option>
+                                <option value="1" {% if p_active %}selected{% endif %}>active</option>
+                                <option value="0" {% if not p_active %}selected{% endif %}>hidden</option>
                               </select>
                               <button class="btn small" type="submit">OK</button>
                             </form>
@@ -161,7 +193,7 @@
                         <b>{{ "%.2f"|format(p.base_price) }} ₽</b>
                       </td>
                       <td>
-                        {% if p.is_active %}
+                        {% if p_active %}
                           <span class="status s-paid">active</span>
                         {% else %}
                           <span class="status s-cancel">hidden</span>
@@ -172,6 +204,8 @@
                           <div class="items">
                             <div style="display:flex;flex-direction:column;gap:12px">
                               {% for g in p.modifier_groups %}
+                                {% set g_active = (g.is_active if g.is_active is defined else true) %}
+                                {% set g_sort = (g.sort if g.sort is defined else 0) %}
                                 <div class="card" style="padding:12px 12px" data-search="{{ ((g.name or '') ~ ' ' ~ (p.name or ''))|lower }}">
                                   <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
                                     <div>
@@ -191,10 +225,10 @@
                                           </select>
                                           <input name="min_select" type="number" value="{{ g.min_select }}" style="width:80px" />
                                           <input name="max_select" type="number" value="{{ g.max_select }}" style="width:80px" />
-                                          <input name="sort" type="number" value="{{ g.sort or 0 }}" style="width:80px" />
+                                          <input name="sort" type="number" value="{{ g_sort }}" style="width:80px" />
                                           <select name="is_active">
-                                            <option value="1" {% if g.is_active %}selected{% endif %}>active</option>
-                                            <option value="0" {% if not g.is_active %}selected{% endif %}>hidden</option>
+                                            <option value="1" {% if g_active %}selected{% endif %}>active</option>
+                                            <option value="0" {% if not g_active %}selected{% endif %}>hidden</option>
                                           </select>
                                           <button class="btn small" type="submit">OK</button>
                                         </form>
@@ -204,7 +238,7 @@
                                         </form>
                                       {% endif %}
 
-                                      {% if g.is_active %}
+                                      {% if g_active %}
                                         <span class="status s-paid">active</span>
                                       {% else %}
                                         <span class="status s-cancel">hidden</span>
@@ -232,6 +266,8 @@
                                     <div class="muted" style="margin-top:10px">
                                       <div style="display:flex;flex-direction:column;gap:8px">
                                         {% for m in g.modifiers %}
+                                        {% set m_active = (m.is_active if m.is_active is defined else true) %}
+                                        {% set m_sort = (m.sort if m.sort is defined else 0) %}
                                           <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap" data-search="{{ (m.name or '')|lower }}">
                                             <div>
                                               <b>{{ m.name }}</b>
@@ -250,10 +286,10 @@
                                                 <form method="post" action="/menu/modifier/{{ m.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
                                                   <input name="name" value="{{ m.name }}" style="width:200px" />
                                                   <input name="price_delta" value="{{ '%.2f'|format(m.price_delta or 0) }}" style="width:120px" />
-                                                  <input name="sort" type="number" value="{{ m.sort or 0 }}" style="width:80px" />
+                                                  <input name="sort" type="number" value="{{ m_sort }}" style="width:80px" />
                                                   <select name="is_active">
-                                                    <option value="1" {% if m.is_active %}selected{% endif %}>active</option>
-                                                    <option value="0" {% if not m.is_active %}selected{% endif %}>hidden</option>
+                                                    <option value="1" {% if m_active %}selected{% endif %}>active</option>
+                                                    <option value="0" {% if not m_active %}selected{% endif %}>hidden</option>
                                                   </select>
                                                   <button class="btn small" type="submit">OK</button>
                                                 </form>
@@ -263,7 +299,7 @@
                                                 </form>
                                               {% endif %}
 
-                                              {% if m.is_active %}
+                                              {% if m_active %}
                                                 <span class="status s-paid">active</span>
                                               {% else %}
                                                 <span class="status s-cancel">hidden</span>

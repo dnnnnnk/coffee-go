@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Optional
 from decimal import Decimal
-from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -271,7 +270,7 @@ async def menu_get(
     settings = get_settings()
 
     async with db.session_scope(settings) as s:
-        menu = await services.web_menu_read(s, cafe_id=cafe_id)
+        menu = await services.web_menu_read(s, cafe_id=cafe_id, include_inactive=True)
 
     flash_message = msg
     flash_ok = (ok != "0")
@@ -324,9 +323,9 @@ async def menu_category_create(
 async def menu_category_update(
     request: Request,
     category_id: int,
-    name: str = Form(None),
-    sort: str = Form(None),
-    is_active: str = Form(None),
+    name: Optional[str] = Form(None),
+    sort: Optional[str] = Form(None),
+    is_active: Optional[str] = Form(None),
     cafe_id: int = Depends(admin_required()),
 ) -> RedirectResponse:
     settings = get_settings()
@@ -416,18 +415,25 @@ async def menu_product_create(
 async def menu_product_update(
     request: Request,
     product_id: int,
-    name: str = Form(None),
-    base_price: str = Form(None),
-    description: str = Form(None),
-    category_id: str = Form(None),
-    sort: str = Form(None),
-    is_active: str = Form(None),
+    name: Optional[str] = Form(None),
+    base_price: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    category_id: Optional[str] = Form(None),
+    sort: Optional[str] = Form(None),
+    is_active: Optional[str] = Form(None),
     cafe_id: int = Depends(admin_required()),
 ) -> RedirectResponse:
     settings = get_settings()
 
     nm = name.strip() if name is not None else None
-    price = _to_decimal_str(base_price)
+    price: Decimal | None = None
+    if base_price is not None:
+        if str(base_price).strip() == "":
+            price = None
+        else:
+            price = _to_decimal_str(base_price)
+            if price is None:
+                return _flash_redirect("/menu", msg="Некорректная цена товара", ok=False)
     cat_id = _to_int(category_id, None)
     srt = _to_int(sort, None)
     act = None
@@ -521,12 +527,12 @@ async def menu_group_create(
 async def menu_group_update(
     request: Request,
     group_id: int,
-    name: str = Form(None),
-    required: str = Form(None),
-    min_select: str = Form(None),
-    max_select: str = Form(None),
-    sort: str = Form(None),
-    is_active: str = Form(None),
+    name: Optional[str] = Form(None),
+    required: Optional[str] = Form(None),
+    min_select: Optional[str] = Form(None),
+    max_select: Optional[str] = Form(None),
+    sort: Optional[str] = Form(None),
+    is_active: Optional[str] = Form(None),
     cafe_id: int = Depends(admin_required()),
 ) -> RedirectResponse:
     settings = get_settings()
@@ -625,16 +631,23 @@ async def menu_modifier_create(
 async def menu_modifier_update(
     request: Request,
     modifier_id: int,
-    name: str = Form(None),
-    price_delta: str = Form(None),
-    sort: str = Form(None),
-    is_active: str = Form(None),
+    name: Optional[str] = Form(None),
+    price_delta: Optional[str] = Form(None),
+    sort: Optional[str] = Form(None),
+    is_active: Optional[str] = Form(None),
     cafe_id: int = Depends(admin_required()),
 ) -> RedirectResponse:
     settings = get_settings()
 
     nm = name.strip() if name is not None else None
-    delta = _to_decimal_str(price_delta)
+    delta: Decimal | None = None
+    if price_delta is not None:
+        if str(price_delta).strip() == "":
+            delta = None
+        else:
+            delta = _to_decimal_str(price_delta)
+            if delta is None:
+                return _flash_redirect("/menu", msg="Некорректный price_delta", ok=False)
     srt = _to_int(sort, None)
     act = None
     if is_active is not None:
