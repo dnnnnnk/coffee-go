@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Optional
-from fastapi import HTTPException
+from decimal import Decimal
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Form, Request
@@ -23,8 +23,6 @@ from .auth import (
 
 router = APIRouter()
 
-from fastapi.responses import RedirectResponse
-
 @router.get("/", include_in_schema=False)
 async def root(request: Request) -> RedirectResponse:
     if get_cafe_id(request) is not None:
@@ -38,6 +36,39 @@ def _templates(request: Request):
 def _redirect(url: str) -> RedirectResponse:
     # 303 is correct for redirect after POST
     return RedirectResponse(url=url, status_code=303)
+
+
+# Helper functions for form/flash handling
+def _to_int(x: Any | None, default: int | None = None) -> int | None:
+    if x is None:
+        return default
+    try:
+        return int(x)
+    except Exception:
+        return default
+
+
+def _to_decimal_str(x: str | None) -> Decimal | None:
+    if x is None:
+        return None
+    s = str(x).strip()
+    if s == "":
+        return None
+    # allow comma decimal separator
+    s = s.replace(",", ".")
+    try:
+        return Decimal(s)
+    except Exception:
+        return None
+
+
+def _flash_redirect(url: str, *, msg: str, ok: bool = True) -> RedirectResponse:
+    # simplest approach: flash via query params (no server-side flash storage)
+    from urllib.parse import urlencode
+
+    q = urlencode({"msg": msg, "ok": "1" if ok else "0"})
+    sep = "&" if "?" in url else "?"
+    return RedirectResponse(url=f"{url}{sep}{q}", status_code=303)
 
 
 
@@ -233,6 +264,8 @@ async def admin_unlock_post(
 @router.get("/menu", response_class=HTMLResponse)
 async def menu_get(
     request: Request,
+    msg: Optional[str] = None,
+    ok: Optional[str] = None,
     cafe_id: int = Depends(admin_required()),
 ) -> HTMLResponse:
     settings = get_settings()
@@ -240,6 +273,8 @@ async def menu_get(
     async with db.session_scope(settings) as s:
         menu = await services.web_menu_read(s, cafe_id=cafe_id)
 
+    flash_message = msg
+    flash_ok = (ok != "0")
     return _templates(request).TemplateResponse(
         "menu.html",
         {
@@ -249,9 +284,15 @@ async def menu_get(
             "is_admin": is_admin(request),
             "cafe_name": (menu.get("cafe") or {}).get("name"),
             "categories": menu.get("categories") or [],
+            "flash_message": flash_message,
+            "flash_ok": flash_ok,
         },
     )
 
+
+
+
+# --- Menu CRUD Endpoints ---
 
 @router.post("/menu/category/create")
 async def menu_category_create(
@@ -262,14 +303,20 @@ async def menu_category_create(
     cafe_id: int = Depends(admin_required()),
 ) -> RedirectResponse:
     settings = get_settings()
+    nm = (name or "").strip()
+    if not nm:
+        return _flash_redirect("/menu", msg="Название категории не может быть пустым", ok=False)
     async with db.session_scope(settings) as s:
-        await services.web_menu_crud_create_category(
-            s,
-            cafe_id=cafe_id,
-            name=name.strip(),
-            sort=int(sort),
-            is_active=bool(int(is_active)),
-        )
+        try:
+            await services.web_menu_crud_create_category(
+                s,
+                cafe_id=cafe_id,
+                name=nm,
+                sort=int(sort),
+                is_active=bool(int(is_active)),
+            )
+        except Exception as e:
+            return _flash_redirect("/menu", msg=f"Не удалось создать категорию: {e}", ok=False)
     return _redirect("/menu")
 
 
@@ -278,20 +325,36 @@ async def menu_category_update(
     request: Request,
     category_id: int,
     name: str = Form(None),
-    sort: int = Form(None),
-    is_active: int = Form(None),
+    sort: str = Form(None),
+    is_active: str = Form(None),
     cafe_id: int = Depends(admin_required()),
 ) -> RedirectResponse:
     settings = get_settings()
+
+    nm = name.strip() if name is not None else None
+    srt = _to_int(sort, None)
+    act = None
+    if is_active is not None:
+        try:
+            act = bool(int(is_active))
+        except Exception:
+            act = None
+
     async with db.session_scope(settings) as s:
-        await services.web_menu_crud_update_category(
-            s,
-            cafe_id=cafe_id,
-            category_id=category_id,
-            name=(name.strip() if name is not None else None),
-            sort=(int(sort) if sort is not None else None),
-            is_active=(bool(int(is_active)) if is_active is not None else None),
-        )
+        try:
+            ok_ = await services.web_menu_crud_update_category(
+                s,
+                cafe_id=cafe_id,
+                category_id=int(category_id),
+                name=(nm if nm != "" else None),
+                sort=srt,
+                is_active=act,
+            )
+            if not ok_:
+                return _flash_redirect("/menu", msg="Категория не найдена", ok=False)
+        except Exception as e:
+            return _flash_redirect("/menu", msg=f"Не удалось обновить категорию: {e}", ok=False)
+
     return _redirect("/menu")
 
 
@@ -303,7 +366,12 @@ async def menu_category_delete(
 ) -> RedirectResponse:
     settings = get_settings()
     async with db.session_scope(settings) as s:
-        await services.web_menu_crud_delete_category(s, cafe_id=cafe_id, category_id=category_id)
+        try:
+            ok_ = await services.web_menu_crud_delete_category(s, cafe_id=cafe_id, category_id=int(category_id))
+            if not ok_:
+                return _flash_redirect("/menu", msg="Категория не найдена", ok=False)
+        except Exception as e:
+            return _flash_redirect("/menu", msg=f"Не удалось удалить категорию: {e}", ok=False)
     return _redirect("/menu")
 
 
@@ -319,17 +387,28 @@ async def menu_product_create(
     cafe_id: int = Depends(admin_required()),
 ) -> RedirectResponse:
     settings = get_settings()
+    nm = (name or "").strip()
+    if not nm:
+        return _flash_redirect("/menu", msg="Название товара не может быть пустым", ok=False)
+    price = _to_decimal_str(base_price)
+    if price is None:
+        return _flash_redirect("/menu", msg="Некорректная цена товара", ok=False)
+
     async with db.session_scope(settings) as s:
-        await services.web_menu_crud_create_product(
-            s,
-            cafe_id=cafe_id,
-            category_id=int(category_id),
-            name=name.strip(),
-            base_price=Decimal(base_price),
-            description=(description.strip() or None),
-            sort=int(sort),
-            is_active=bool(int(is_active)),
-        )
+        try:
+            await services.web_menu_crud_create_product(
+                s,
+                cafe_id=cafe_id,
+                category_id=int(category_id),
+                name=nm,
+                base_price=price,
+                description=((description or "").strip() or None),
+                sort=int(sort),
+                is_active=bool(int(is_active)),
+            )
+        except Exception as e:
+            return _flash_redirect("/menu", msg=f"Не удалось создать товар: {e}", ok=False)
+
     return _redirect("/menu")
 
 
@@ -340,24 +419,47 @@ async def menu_product_update(
     name: str = Form(None),
     base_price: str = Form(None),
     description: str = Form(None),
-    category_id: int = Form(None),
-    sort: int = Form(None),
-    is_active: int = Form(None),
+    category_id: str = Form(None),
+    sort: str = Form(None),
+    is_active: str = Form(None),
     cafe_id: int = Depends(admin_required()),
 ) -> RedirectResponse:
     settings = get_settings()
+
+    nm = name.strip() if name is not None else None
+    price = _to_decimal_str(base_price)
+    cat_id = _to_int(category_id, None)
+    srt = _to_int(sort, None)
+    act = None
+    if is_active is not None:
+        try:
+            act = bool(int(is_active))
+        except Exception:
+            act = None
+
+    desc = None
+    if description is not None:
+        d = description.strip()
+        desc = d or None
+
     async with db.session_scope(settings) as s:
-        await services.web_menu_crud_update_product(
-            s,
-            cafe_id=cafe_id,
-            product_id=product_id,
-            name=(name.strip() if name is not None else None),
-            description=((description.strip() or None) if description is not None else None),
-            base_price=(Decimal(base_price) if base_price is not None and base_price != "" else None),
-            category_id=(int(category_id) if category_id is not None else None),
-            sort=(int(sort) if sort is not None else None),
-            is_active=(bool(int(is_active)) if is_active is not None else None),
-        )
+        try:
+            ok_ = await services.web_menu_crud_update_product(
+                s,
+                cafe_id=cafe_id,
+                product_id=int(product_id),
+                name=(nm if nm != "" else None),
+                description=desc,
+                base_price=price,
+                category_id=cat_id,
+                sort=srt,
+                is_active=act,
+            )
+            if not ok_:
+                return _flash_redirect("/menu", msg="Товар не найден", ok=False)
+        except Exception as e:
+            return _flash_redirect("/menu", msg=f"Не удалось обновить товар: {e}", ok=False)
+
     return _redirect("/menu")
 
 
@@ -369,7 +471,12 @@ async def menu_product_delete(
 ) -> RedirectResponse:
     settings = get_settings()
     async with db.session_scope(settings) as s:
-        await services.web_menu_crud_delete_product(s, cafe_id=cafe_id, product_id=product_id)
+        try:
+            ok_ = await services.web_menu_crud_delete_product(s, cafe_id=cafe_id, product_id=int(product_id))
+            if not ok_:
+                return _flash_redirect("/menu", msg="Товар не найден", ok=False)
+        except Exception as e:
+            return _flash_redirect("/menu", msg=f"Не удалось удалить товар: {e}", ok=False)
     return _redirect("/menu")
 
 
@@ -386,19 +493,27 @@ async def menu_group_create(
     cafe_id: int = Depends(admin_required()),
 ) -> RedirectResponse:
     settings = get_settings()
+    nm = (name or "").strip()
+    if not nm:
+        return _flash_redirect("/menu", msg="Название группы не может быть пустым", ok=False)
+    if int(max_select) < int(min_select):
+        return _flash_redirect("/menu", msg="max_select не может быть меньше min_select", ok=False)
+
     async with db.session_scope(settings) as s:
-        # защита: группа только для продукта этой кофейни
-        await services.web_menu_assert_product_belongs_to_cafe(s, cafe_id=cafe_id, product_id=int(product_id))
-        await services.web_menu_crud_create_modifier_group(
-            s,
-            product_id=int(product_id),
-            name=name.strip(),
-            required=bool(int(required)),
-            min_select=int(min_select),
-            max_select=int(max_select),
-            sort=int(sort),
-            is_active=bool(int(is_active)),
-        )
+        try:
+            await services.web_menu_assert_product_belongs_to_cafe(s, cafe_id=cafe_id, product_id=int(product_id))
+            await services.web_menu_crud_create_modifier_group(
+                s,
+                product_id=int(product_id),
+                name=nm,
+                required=bool(int(required)),
+                min_select=int(min_select),
+                max_select=int(max_select),
+                sort=int(sort),
+                is_active=bool(int(is_active)),
+            )
+        except Exception as e:
+            return _flash_redirect("/menu", msg=f"Не удалось создать группу: {e}", ok=False)
     return _redirect("/menu")
 
 
@@ -407,26 +522,51 @@ async def menu_group_update(
     request: Request,
     group_id: int,
     name: str = Form(None),
-    required: int = Form(None),
-    min_select: int = Form(None),
-    max_select: int = Form(None),
-    sort: int = Form(None),
-    is_active: int = Form(None),
+    required: str = Form(None),
+    min_select: str = Form(None),
+    max_select: str = Form(None),
+    sort: str = Form(None),
+    is_active: str = Form(None),
     cafe_id: int = Depends(admin_required()),
 ) -> RedirectResponse:
     settings = get_settings()
+
+    nm = name.strip() if name is not None else None
+    req = None
+    if required is not None:
+        try:
+            req = bool(int(required))
+        except Exception:
+            req = None
+    min_s = _to_int(min_select, None)
+    max_s = _to_int(max_select, None)
+    if (min_s is not None) and (max_s is not None) and (max_s < min_s):
+        return _flash_redirect("/menu", msg="max_select не может быть меньше min_select", ok=False)
+    srt = _to_int(sort, None)
+    act = None
+    if is_active is not None:
+        try:
+            act = bool(int(is_active))
+        except Exception:
+            act = None
+
     async with db.session_scope(settings) as s:
-        await services.web_menu_assert_group_belongs_to_cafe(s, cafe_id=cafe_id, group_id=group_id)
-        await services.web_menu_crud_update_modifier_group(
-            s,
-            group_id=group_id,
-            name=(name.strip() if name is not None else None),
-            required=(bool(int(required)) if required is not None else None),
-            min_select=(int(min_select) if min_select is not None else None),
-            max_select=(int(max_select) if max_select is not None else None),
-            sort=(int(sort) if sort is not None else None),
-            is_active=(bool(int(is_active)) if is_active is not None else None),
-        )
+        try:
+            await services.web_menu_assert_group_belongs_to_cafe(s, cafe_id=cafe_id, group_id=int(group_id))
+            ok_ = await services.web_menu_crud_update_modifier_group(
+                s,
+                group_id=int(group_id),
+                name=(nm if nm != "" else None),
+                required=req,
+                min_select=min_s,
+                max_select=max_s,
+                sort=srt,
+                is_active=act,
+            )
+            if not ok_:
+                return _flash_redirect("/menu", msg="Группа не найдена", ok=False)
+        except Exception as e:
+            return _flash_redirect("/menu", msg=f"Не удалось обновить группу: {e}", ok=False)
     return _redirect("/menu")
 
 
@@ -438,7 +578,12 @@ async def menu_group_delete(
 ) -> RedirectResponse:
     settings = get_settings()
     async with db.session_scope(settings) as s:
-        await services.web_menu_crud_delete_modifier_group(s, cafe_id=cafe_id, group_id=group_id)
+        try:
+            ok_ = await services.web_menu_crud_delete_modifier_group(s, cafe_id=cafe_id, group_id=int(group_id))
+            if not ok_:
+                return _flash_redirect("/menu", msg="Группа не найдена", ok=False)
+        except Exception as e:
+            return _flash_redirect("/menu", msg=f"Не удалось удалить группу: {e}", ok=False)
     return _redirect("/menu")
 
 
@@ -453,16 +598,26 @@ async def menu_modifier_create(
     cafe_id: int = Depends(admin_required()),
 ) -> RedirectResponse:
     settings = get_settings()
+    nm = (name or "").strip()
+    if not nm:
+        return _flash_redirect("/menu", msg="Название модификатора не может быть пустым", ok=False)
+    delta = _to_decimal_str(price_delta)
+    if delta is None:
+        return _flash_redirect("/menu", msg="Некорректный price_delta", ok=False)
+
     async with db.session_scope(settings) as s:
-        await services.web_menu_assert_group_belongs_to_cafe(s, cafe_id=cafe_id, group_id=int(group_id))
-        await services.web_menu_crud_create_modifier(
-            s,
-            group_id=int(group_id),
-            name=name.strip(),
-            price_delta=Decimal(price_delta),
-            sort=int(sort),
-            is_active=bool(int(is_active)),
-        )
+        try:
+            await services.web_menu_assert_group_belongs_to_cafe(s, cafe_id=cafe_id, group_id=int(group_id))
+            await services.web_menu_crud_create_modifier(
+                s,
+                group_id=int(group_id),
+                name=nm,
+                price_delta=delta,
+                sort=int(sort),
+                is_active=bool(int(is_active)),
+            )
+        except Exception as e:
+            return _flash_redirect("/menu", msg=f"Не удалось создать модификатор: {e}", ok=False)
     return _redirect("/menu")
 
 
@@ -472,21 +627,38 @@ async def menu_modifier_update(
     modifier_id: int,
     name: str = Form(None),
     price_delta: str = Form(None),
-    sort: int = Form(None),
-    is_active: int = Form(None),
+    sort: str = Form(None),
+    is_active: str = Form(None),
     cafe_id: int = Depends(admin_required()),
 ) -> RedirectResponse:
     settings = get_settings()
+
+    nm = name.strip() if name is not None else None
+    delta = _to_decimal_str(price_delta)
+    srt = _to_int(sort, None)
+    act = None
+    if is_active is not None:
+        try:
+            act = bool(int(is_active))
+        except Exception:
+            act = None
+
     async with db.session_scope(settings) as s:
-        await services.web_menu_assert_modifier_belongs_to_cafe(s, cafe_id=cafe_id, modifier_id=modifier_id)
-        await services.web_menu_crud_update_modifier(
-            s,
-            modifier_id=modifier_id,
-            name=(name.strip() if name is not None else None),
-            price_delta=(Decimal(price_delta) if price_delta is not None and price_delta != "" else None),
-            sort=(int(sort) if sort is not None else None),
-            is_active=(bool(int(is_active)) if is_active is not None else None),
-        )
+        try:
+            await services.web_menu_assert_modifier_belongs_to_cafe(s, cafe_id=cafe_id, modifier_id=int(modifier_id))
+            ok_ = await services.web_menu_crud_update_modifier(
+                s,
+                modifier_id=int(modifier_id),
+                name=(nm if nm != "" else None),
+                price_delta=delta,
+                sort=srt,
+                is_active=act,
+            )
+            if not ok_:
+                return _flash_redirect("/menu", msg="Модификатор не найден", ok=False)
+        except Exception as e:
+            return _flash_redirect("/menu", msg=f"Не удалось обновить модификатор: {e}", ok=False)
+
     return _redirect("/menu")
 
 
@@ -498,5 +670,10 @@ async def menu_modifier_delete(
 ) -> RedirectResponse:
     settings = get_settings()
     async with db.session_scope(settings) as s:
-        await services.web_menu_crud_delete_modifier(s, cafe_id=cafe_id, modifier_id=modifier_id)
+        try:
+            ok_ = await services.web_menu_crud_delete_modifier(s, cafe_id=cafe_id, modifier_id=int(modifier_id))
+            if not ok_:
+                return _flash_redirect("/menu", msg="Модификатор не найден", ok=False)
+        except Exception as e:
+            return _flash_redirect("/menu", msg=f"Не удалось удалить модификатор: {e}", ok=False)
     return _redirect("/menu")

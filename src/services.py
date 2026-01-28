@@ -820,32 +820,122 @@ async def web_set_stoplist_modifier(session: AsyncSession, *, cafe_id: int, modi
         )
 
 
-async def web_menu_read(session: AsyncSession, *, cafe_id: int) -> dict:
-    """Read-only menu dump for cafe (categories -> products -> groups -> modifiers)."""
+async def web_menu_read(session: AsyncSession, *, cafe_id: int, include_inactive: bool = True) -> dict:
+    """Menu dump for cafe (categories -> products -> groups -> modifiers).
+
+    For admin CRUD we usually want to see hidden entities too, so include_inactive=True by default.
+    """
     cafe = await db.get_cafe(session, cafe_id)
     if not cafe:
         raise NotFound("Кофейня не найдена.")
 
-    categories = await db.list_categories(session, cafe_id)
-    products = await db.list_products(session, cafe_id, category_id=None)
+    # --- categories (optionally include inactive) ---
+    qc = (
+        select(
+            db.categories.c.id,
+            db.categories.c.cafe_id,
+            db.categories.c.name,
+            db.categories.c.sort,
+            db.categories.c.is_active,
+        )
+        .where(db.categories.c.cafe_id == cafe_id)
+        .order_by(db.categories.c.sort.asc(), db.categories.c.id.asc())
+    )
+    if not include_inactive:
+        qc = qc.where(db.categories.c.is_active == True)  # noqa: E712
+
+    categories_rows = (await session.execute(qc)).mappings().all()
+    categories = [dict(r) for r in categories_rows]
+
+    # --- products (optionally include inactive) ---
+    qp = (
+        select(
+            db.products.c.id,
+            db.products.c.cafe_id,
+            db.products.c.category_id,
+            db.products.c.name,
+            db.products.c.description,
+            db.products.c.base_price,
+            db.products.c.sort,
+            db.products.c.is_active,
+        )
+        .where(db.products.c.cafe_id == cafe_id)
+        .order_by(db.products.c.sort.asc(), db.products.c.id.asc())
+    )
+    if not include_inactive:
+        qp = qp.where(db.products.c.is_active == True)  # noqa: E712
+
+    products_rows = (await session.execute(qp)).mappings().all()
+    products = [dict(r) for r in products_rows]
+
+    # Products without category_id would otherwise crash template (int(None)).
+    # Put them into a synthetic category.
+    has_uncat = any(p.get("category_id") is None for p in products)
+    if has_uncat:
+        categories = (
+            [{"id": 0, "cafe_id": cafe_id, "name": "Без категории", "sort": 10**9, "is_active": True}]
+            + categories
+        )
 
     # group products by category
     prods_by_cat: dict[int, list[dict]] = {}
     for p in products:
-        cid = int(p["category_id"])
+        cid_raw = p.get("category_id")
+        cid = int(cid_raw) if cid_raw is not None else 0
         prods_by_cat.setdefault(cid, []).append(p)
 
-    # load modifier groups/modifiers per product
+    # --- modifier groups for all products ---
+    product_ids = [int(p["id"]) for p in products]
     groups_by_prod: dict[int, list[dict]] = {}
     mods_by_group: dict[int, list[dict]] = {}
 
-    for p in products:
-        pid = int(p["id"])
-        groups = await db.list_modifier_groups(session, pid)
-        groups_by_prod[pid] = groups
-        for g in groups:
-            gid = int(g["id"])
-            mods_by_group[gid] = await db.list_modifiers(session, gid)
+    if product_ids:
+        qg = (
+            select(
+                db.modifier_groups.c.id,
+                db.modifier_groups.c.product_id,
+                db.modifier_groups.c.name,
+                db.modifier_groups.c.required,
+                db.modifier_groups.c.min_select,
+                db.modifier_groups.c.max_select,
+                db.modifier_groups.c.sort,
+                db.modifier_groups.c.is_active,
+            )
+            .where(db.modifier_groups.c.product_id.in_(product_ids))
+            .order_by(db.modifier_groups.c.sort.asc(), db.modifier_groups.c.id.asc())
+        )
+        if not include_inactive:
+            qg = qg.where(db.modifier_groups.c.is_active == True)  # noqa: E712
+
+        groups_rows = (await session.execute(qg)).mappings().all()
+        all_groups = [dict(r) for r in groups_rows]
+
+        for g in all_groups:
+            pid = int(g["product_id"])
+            groups_by_prod.setdefault(pid, []).append(g)
+
+        group_ids = [int(g["id"]) for g in all_groups]
+        if group_ids:
+            qm = (
+                select(
+                    db.modifiers.c.id,
+                    db.modifiers.c.group_id,
+                    db.modifiers.c.name,
+                    db.modifiers.c.price_delta,
+                    db.modifiers.c.sort,
+                    db.modifiers.c.is_active,
+                )
+                .where(db.modifiers.c.group_id.in_(group_ids))
+                .order_by(db.modifiers.c.sort.asc(), db.modifiers.c.id.asc())
+            )
+            if not include_inactive:
+                qm = qm.where(db.modifiers.c.is_active == True)  # noqa: E712
+
+            mods_rows = (await session.execute(qm)).mappings().all()
+            all_mods = [dict(r) for r in mods_rows]
+            for m in all_mods:
+                gid = int(m["group_id"])
+                mods_by_group.setdefault(gid, []).append(m)
 
     out_categories: list[dict] = []
     for c in categories:
@@ -861,10 +951,7 @@ async def web_menu_read(session: AsyncSession, *, cafe_id: int) -> dict:
 
         out_categories.append({**c, "products": out_products})
 
-    return {
-        "cafe": cafe,
-        "categories": out_categories,
-    }
+    return {"cafe": cafe, "categories": out_categories}
 
 
 # ----------------------------
@@ -879,6 +966,9 @@ async def web_menu_crud_create_category(
     sort: int = 0,
     is_active: bool = True,
 ) -> int:
+    name = (name or "").strip()
+    if not name:
+        raise Validation("Название категории не может быть пустым.")
     now = db.utcnow()
     values: dict[str, Any] = {
         "cafe_id": cafe_id,
@@ -910,6 +1000,9 @@ async def web_menu_crud_update_category(
     now = db.utcnow()
     values: dict[str, Any] = {"updated_at": now}
     if name is not None:
+        name = (name or "").strip()
+        if not name:
+            raise Validation("Название категории не может быть пустым.")
         values["name"] = name
     if sort is not None and "sort" in db.categories.c:
         values["sort"] = int(sort)
@@ -936,13 +1029,19 @@ async def web_menu_crud_create_product(
     sort: int = 0,
     is_active: bool = True,
 ) -> int:
+    name = (name or "").strip()
+    if not name:
+        raise Validation("Название товара не может быть пустым.")
+    base_price = d2(base_price)
+    if base_price < Decimal("0.00"):
+        raise Validation("Цена не может быть отрицательной.")
     now = db.utcnow()
     values: dict[str, Any] = {
         "cafe_id": cafe_id,
         "category_id": category_id,
         "name": name,
         "description": description,
-        "base_price": d2(base_price),
+        "base_price": base_price,
         "is_active": bool(is_active),
         "created_at": now,
         "updated_at": now,
@@ -974,11 +1073,17 @@ async def web_menu_crud_update_product(
     values: dict[str, Any] = {"updated_at": now}
 
     if name is not None:
+        name = (name or "").strip()
+        if not name:
+            raise Validation("Название товара не может быть пустым.")
         values["name"] = name
     if description is not None:
         values["description"] = description
     if base_price is not None:
-        values["base_price"] = d2(base_price)
+        bp = d2(base_price)
+        if bp < Decimal("0.00"):
+            raise Validation("Цена не может быть отрицательной.")
+        values["base_price"] = bp
     if category_id is not None:
         values["category_id"] = int(category_id)
     if sort is not None and "sort" in db.products.c:
@@ -1005,14 +1110,28 @@ async def web_menu_crud_create_modifier_group(
     max_select: int,
     sort: int = 0,
     is_active: bool = True,
+    cafe_id: int | None = None,
 ) -> int:
+    # optional ownership check
+    if cafe_id is not None:
+        await web_menu_assert_product_belongs_to_cafe(session, cafe_id=cafe_id, product_id=int(product_id))
+
+    name = (name or "").strip()
+    if not name:
+        raise Validation("Название группы не может быть пустым.")
+
+    min_select = int(min_select)
+    max_select = int(max_select)
+    if min_select < 0 or max_select < 0 or max_select < min_select:
+        raise Validation("Некорректные ограничения выбора (min/max).")
+
     now = db.utcnow()
     values: dict[str, Any] = {
         "product_id": int(product_id),
         "name": name,
         "required": bool(required),
-        "min_select": int(min_select),
-        "max_select": int(max_select),
+        "min_select": min_select,
+        "max_select": max_select,
         "is_active": bool(is_active),
         "created_at": now,
         "updated_at": now,
@@ -1038,9 +1157,39 @@ async def web_menu_crud_update_modifier_group(
     max_select: int | None = None,
     sort: int | None = None,
     is_active: bool | None = None,
+    cafe_id: int | None = None,
 ) -> bool:
     now = db.utcnow()
     values: dict[str, Any] = {"updated_at": now}
+
+    if cafe_id is not None:
+        await web_menu_assert_group_belongs_to_cafe(session, cafe_id=cafe_id, group_id=int(group_id))
+
+    if name is not None:
+        name = (name or "").strip()
+        if not name:
+            raise Validation("Название группы не может быть пустым.")
+
+    if min_select is not None:
+        min_select = int(min_select)
+        if min_select < 0:
+            raise Validation("min_select не может быть отрицательным.")
+
+    if max_select is not None:
+        max_select = int(max_select)
+        if max_select < 0:
+            raise Validation("max_select не может быть отрицательным.")
+
+    # if both present, validate relation; if only one present, validate against current db value
+    if min_select is not None or max_select is not None:
+        q_cur = select(db.modifier_groups.c.min_select, db.modifier_groups.c.max_select).where(db.modifier_groups.c.id == group_id)
+        cur = (await session.execute(q_cur)).mappings().first()
+        if not cur:
+            raise NotFound("Группа не найдена.")
+        cur_min = int(cur["min_select"]) if min_select is None else int(min_select)
+        cur_max = int(cur["max_select"]) if max_select is None else int(max_select)
+        if cur_max < cur_min:
+            raise Validation("max_select должен быть >= min_select.")
 
     if name is not None:
         values["name"] = name
@@ -1072,7 +1221,14 @@ async def web_menu_crud_create_modifier(
     price_delta: Decimal,
     sort: int = 0,
     is_active: bool = True,
+    cafe_id: int | None = None,
 ) -> int:
+    if cafe_id is not None:
+        await web_menu_assert_group_belongs_to_cafe(session, cafe_id=cafe_id, group_id=int(group_id))
+
+    name = (name or "").strip()
+    if not name:
+        raise Validation("Название модификатора не может быть пустым.")
     now = db.utcnow()
     values: dict[str, Any] = {
         "group_id": int(group_id),
@@ -1101,11 +1257,18 @@ async def web_menu_crud_update_modifier(
     price_delta: Decimal | None = None,
     sort: int | None = None,
     is_active: bool | None = None,
+    cafe_id: int | None = None,
 ) -> bool:
     now = db.utcnow()
     values: dict[str, Any] = {"updated_at": now}
 
+    if cafe_id is not None:
+        await web_menu_assert_modifier_belongs_to_cafe(session, cafe_id=cafe_id, modifier_id=int(modifier_id))
+
     if name is not None:
+        name = (name or "").strip()
+        if not name:
+            raise Validation("Название модификатора не может быть пустым.")
         values["name"] = name
     if price_delta is not None:
         values["price_delta"] = d2(price_delta)

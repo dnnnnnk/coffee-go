@@ -6,7 +6,13 @@
 {% block content %}
   <h1>Меню</h1>
 
-  {% if is_admin %}
+  {% if flash_message %}
+    <div class="flash {{ 'ok' if flash_ok else 'bad' }}">{{ flash_message }}</div>
+  {% endif %}
+
+  {% set _is_admin = admin_unlocked if admin_unlocked is defined else (is_admin if is_admin is defined else false) %}
+
+  {% if _is_admin %}
     <div class="flash ok">✅ Админ-разблокировка активна. CRUD включён.</div>
 
     <div class="card" style="margin: 12px 0 14px 0; padding:0">
@@ -50,7 +56,7 @@
               <div class="muted">Категория #{{ cat.id }}</div>
             </div>
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
-              {% if is_admin %}
+              {% if _is_admin %}
                 <form method="post" action="/menu/category/{{ cat.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
                   <input name="name" value="{{ cat.name }}" style="width:220px" />
                   <input name="sort" type="number" value="{{ cat.sort or 0 }}" style="width:90px" />
@@ -75,7 +81,7 @@
           </div>
 
           <div style="padding:14px 16px">
-            {% if is_admin %}
+            {% if _is_admin %}
               <div class="flash" style="margin-bottom:12px">
                 <form method="post" action="/menu/product/create" style="display:flex;gap:10px;flex-wrap:wrap;margin:0;align-items:center">
                   <input type="hidden" name="category_id" value="{{ cat.id }}" />
@@ -113,7 +119,7 @@
                         {% endif %}
                         <div class="muted" style="margin-top:6px">Товар #{{ p.id }}</div>
 
-                        {% if is_admin %}
+                        {% if _is_admin %}
                           <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
                             <form method="post" action="/menu/product/{{ p.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
                               <input name="name" value="{{ p.name }}" style="width:220px" />
@@ -176,7 +182,7 @@
                                       </div>
                                     </div>
                                     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
-                                      {% if is_admin %}
+                                      {% if _is_admin %}
                                         <form method="post" action="/menu/group/{{ g.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
                                           <input name="name" value="{{ g.name }}" style="width:200px" />
                                           <select name="required">
@@ -206,7 +212,7 @@
                                     </div>
                                   </div>
 
-                                  {% if is_admin %}
+                                  {% if _is_admin %}
                                     <div style="margin-top:10px">
                                       <form method="post" action="/menu/modifier/create" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
                                         <input type="hidden" name="group_id" value="{{ g.id }}" />
@@ -240,7 +246,7 @@
                                             </div>
 
                                             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
-                                              {% if is_admin %}
+                                              {% if _is_admin %}
                                                 <form method="post" action="/menu/modifier/{{ m.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
                                                   <input name="name" value="{{ m.name }}" style="width:200px" />
                                                   <input name="price_delta" value="{{ '%.2f'|format(m.price_delta or 0) }}" style="width:120px" />
