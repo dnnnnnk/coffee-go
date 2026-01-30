@@ -22,6 +22,27 @@ from .auth import (
 
 router = APIRouter()
 
+@router.get("/orders/tbody", response_class=HTMLResponse)
+async def orders_tbody_get(
+    request: Request,
+    status: Optional[str] = None,
+    q: Optional[str] = None,
+    cafe_id: int = Depends(login_required()),
+) -> HTMLResponse:
+    settings = get_settings()
+    async with db.session_scope(settings) as s:
+        # если у тебя в сервисе ещё нет поиска — пока игнорируй q или добавь позже
+        orders = await services.web_list_orders(s, cafe_id=cafe_id, status_filter=status)
+
+    # отдаём только кусок таблицы
+    return _templates(request).TemplateResponse(
+        "_orders_tbody.html",
+        {
+            "request": request,
+            "orders": orders,
+        },
+    )
+
 @router.get("/", include_in_schema=False)
 async def root(request: Request) -> RedirectResponse:
     if get_cafe_id(request) is not None:

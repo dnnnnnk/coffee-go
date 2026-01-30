@@ -2,6 +2,52 @@
 
 {% block title %}Заказы{% endblock %}
 
+{% set active_page = 'orders' %}
+
+{% block extra_head %}
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const REFRESH_MS = 3500;
+
+  function getFilters() {
+    const form = document.querySelector('form[action="/orders"]');
+    return {
+      status: form?.querySelector('select[name="status"]')?.value || "",
+      q: form?.querySelector('input[name="q"]')?.value || "",
+    };
+  }
+
+  async function refreshTbody() {
+    const oldTbody = document.querySelector("#orders-table tbody");
+    if (!oldTbody) return;
+
+    const { status, q } = getFilters();
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (q) params.set("q", q);
+
+    const url = "/orders/tbody" + (params.toString() ? "?" + params.toString() : "");
+    const res = await fetch(url, { credentials: "same-origin", cache: "no-store" });
+    if (!res.ok) return;
+
+    const html = (await res.text()).trim();
+
+    // ВАЖНО: tbody парсим внутри table, иначе браузер может “съесть” tbody
+    const tmpTable = document.createElement("table");
+    tmpTable.innerHTML = html;
+
+    const newTbody = tmpTable.querySelector("tbody");
+    if (!newTbody) return;
+
+    oldTbody.replaceWith(newTbody);
+  }
+
+  refreshTbody().catch(() => {});
+  setInterval(() => refreshTbody().catch(() => {}), REFRESH_MS);
+});
+</script>
+{% endblock %}
+
 {% block content %}
   <h1>Заказы</h1>
 
@@ -32,7 +78,7 @@
     </div>
   </div>
 
-  <table>
+  <table id="orders-table">
     <thead>
       <tr>
         <th style="width:80px">#</th>
@@ -44,98 +90,10 @@
         <th style="width:260px">Действия</th>
       </tr>
     </thead>
-    <tbody>
-      {% if not orders or orders|length == 0 %}
-        <tr>
-          <td colspan="7" class="muted">Пока пусто.</td>
-        </tr>
-      {% else %}
-        {% for o in orders %}
-          <tr>
-            <td>
-              <b>{{ o.id }}</b>
-              <div class="muted">{{ o.created_at }}</div>
-            </td>
-            <td>
-              <div class="rowcode">{{ o.code }}</div>
-            </td>
-            <td>
-              {% set st = (o.status or '') %}
-              {% set st_label_map = {
-                'pending_payment': 'ожидает оплаты',
-                'paid': 'оплачен',
-                'accepted': 'в работе',
-                'in_progress': 'готов',
-                'done': 'выдан'
-              } %}
-              {% set st_label = st_label_map.get(st, st) %}
-              <span class="status s-{{ st }}">{{ st_label }}</span>
-            </td>
-            <td>
-              <div class="items">
-                {% set order_items = o.get('items', []) if o is mapping else o.items %}
-                {% if order_items %}
-                  <ul style="margin:0;padding-left:16px">
-                    {% for it in order_items %}
-                      <li>
-                        <b>{{ it.title }}</b>
-                        {% if it.modifiers %}
-                          <span class="muted">({{ it.modifiers }})</span>
-                        {% endif %}
-                        <span class="muted">— {{ it.qty }} × {{ '%.2f'|format(it.unit_price) }} ₽</span>
-                      </li>
-                    {% endfor %}
-                  </ul>
-                {% else %}
-                  <span class="muted">—</span>
-                {% endif %}
-              </div>
-            </td>
-            <td>
-              <b>{{ '%.2f'|format(o.total) }} ₽</b>
-            </td>
-            <td>
-              {% if o.pickup_type == 'asap' %}
-                <div><b>Как можно скорее</b></div>
-              {% elif o.pickup_type == 'time' and o.pickup_at %}
-                <div><b>Ко времени</b></div>
-                <div class="muted">{{ o.pickup_at }}</div>
-              {% else %}
-                <span class="muted">—</span>
-              {% endif %}
-            </td>
-            <td>
-              <div class="actions">
-                {% if st == 'paid' %}
-                  <form method="post" action="/orders/{{ o.id }}/status">
-                    <input type="hidden" name="new_status" value="accepted" />
-                    <button class="btn small warn" type="submit">В работу</button>
-                  </form>
-                {% elif st == 'accepted' %}
-                  <form method="post" action="/orders/{{ o.id }}/status">
-                    <input type="hidden" name="new_status" value="in_progress" />
-                    <button class="btn small ok" type="submit">Готово</button>
-                  </form>
-                {% elif st == 'in_progress' %}
-                  <form method="post" action="/orders/{{ o.id }}/status">
-                    <input type="hidden" name="new_status" value="done" />
-                    <button class="btn small" type="submit">Выдан</button>
-                  </form>
-                {% else %}
-                  <span class="muted">—</span>
-                {% endif %}
-              </div>
-            </td>
-          </tr>
-        {% endfor %}
-      {% endif %}
-    </tbody>
+    {% include "_orders_tbody.html" %}
   </table>
 
   <div class="hint" style="margin-top:12px">
     Подсказка: статусы можно менять кнопками справа. Фильтр сверху — для быстрого контроля очереди.
   </div>
 {% endblock %}
-
-{# Vars for _base.html #}
-{% set active_page = 'orders' %}
