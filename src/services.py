@@ -708,7 +708,7 @@ async def web_list_orders(
     limit: int = 200,
     offset: int = 0,
 ) -> list[dict]:
-    """List orders for cafe. Status filter is optional."""
+    """List orders for cafe. Includes items + modifiers snapshots for web panel."""
     q = select(
         db.orders.c.id,
         db.orders.c.code,
@@ -727,8 +727,88 @@ async def web_list_orders(
 
     q = q.order_by(db.orders.c.created_at.desc()).limit(int(limit)).offset(int(offset))
     rows = (await session.execute(q)).mappings().all()
-    return [dict(r) for r in rows]
+    orders_list = [dict(r) for r in rows]
+    if not orders_list:
+        return []
 
+    order_ids = [int(o["id"]) for o in orders_list]
+
+    # 1) items пачкой
+    q_items = (
+        select(
+            db.order_items.c.id.label("order_item_id"),
+            db.order_items.c.order_id,
+            db.order_items.c.title_snapshot,
+            db.order_items.c.qty,
+            db.order_items.c.line_total,
+        )
+        .where(db.order_items.c.order_id.in_(order_ids))
+        .order_by(db.order_items.c.order_id.asc(), db.order_items.c.id.asc())
+    )
+    items_rows = (await session.execute(q_items)).mappings().all()
+    if not items_rows:
+        for o in orders_list:
+            o["items"] = []
+        return orders_list
+
+    item_ids = [int(r["order_item_id"]) for r in items_rows]
+
+    # 2) модификаторы пачкой
+    q_mods = (
+        select(
+            db.order_item_modifiers.c.order_item_id,
+            db.order_item_modifiers.c.title_snapshot,
+            db.order_item_modifiers.c.price_delta_snapshot,
+        )
+        .where(db.order_item_modifiers.c.order_item_id.in_(item_ids))
+        .order_by(db.order_item_modifiers.c.order_item_id.asc(), db.order_item_modifiers.c.id.asc())
+    )
+    mods_rows = (await session.execute(q_mods)).mappings().all()
+
+    mods_by_item: dict[int, list[dict]] = {}
+    for m in mods_rows:
+        iid = int(m["order_item_id"])
+        mods_by_item.setdefault(iid, []).append(
+            {
+                "title": str(m["title_snapshot"]),
+                "delta": d2(m["price_delta_snapshot"]),
+            }
+        )
+
+    items_by_order: dict[int, list[dict]] = {}
+    for it in items_rows:
+        oid = int(it["order_id"])
+        iid = int(it["order_item_id"])
+        qty = int(it["qty"])
+        line_total = d2(it["line_total"])
+
+        unit_price = d2(line_total / Decimal(qty)) if qty > 0 else Decimal("0.00")
+
+        mods = mods_by_item.get(iid, [])
+        mods_str = ", ".join(
+            (
+                f"{m['title']}{f' +{m['delta']:.2f}' if m['delta'] != 0 else ''}"
+                .replace(".00", "")
+                + "₽"
+                if m["delta"] != 0
+                else f"{m['title']}"
+            )
+            for m in mods
+        )
+
+        items_by_order.setdefault(oid, []).append(
+            {
+                "title": str(it["title_snapshot"]),
+                "qty": qty,
+                "unit_price": unit_price,
+                "modifiers": (mods_str if mods_str else ""),
+            }
+        )
+
+    for o in orders_list:
+        o["items"] = items_by_order.get(int(o["id"]), [])
+
+    return orders_list
 
 # --- Order status transitions for web panel ---
 # No cancellation from web. One-way: paid -> accepted -> in_progress -> done
