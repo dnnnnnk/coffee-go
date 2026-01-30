@@ -15,6 +15,7 @@ from src.bot.handlers import router as main_router
 from src import payments
 from src import services
 from src.seeds.demo import seed_minimal_demo_data
+from src.bot.outbox import run_outbox_worker
 
 logger = logging.getLogger("easycoffee")
 
@@ -43,9 +44,15 @@ def build_bot(token: str) -> Bot:
 async def run_bot(settings) -> None:
     bot = build_bot(settings.BOT_TOKEN)
     dp = build_dispatcher()
+
+    outbox_task = asyncio.create_task(run_outbox_worker(settings, bot), name="outbox")
+
     try:
         await dp.start_polling(bot)
     finally:
+        outbox_task.cancel()
+        with suppress(Exception):
+            await outbox_task
         with suppress(Exception):
             await bot.session.close()
 

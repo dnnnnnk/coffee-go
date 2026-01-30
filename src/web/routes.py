@@ -121,6 +121,8 @@ async def logout_post(request: Request) -> RedirectResponse:
 async def orders_get(
     request: Request,
     status: Optional[str] = None,
+    msg: Optional[str] = None,
+    ok: Optional[str] = None,
     cafe_id: int = Depends(login_required()),
 ) -> HTMLResponse:
     settings = get_settings()
@@ -136,6 +138,8 @@ async def orders_get(
             "admin_unlocked": is_admin(request),
             "orders": orders,
             "status_filter": status,
+            "flash_message": msg,
+            "flash_ok": (ok != "0"),
         },
     )
 
@@ -145,19 +149,36 @@ async def orders_status_post(
     request: Request,
     order_id: int,
     new_status: str = Form(...),
-    cafe_id: int = Depends(login_required()),
+    cafe_id: int = Depends(admin_required()),
 ) -> RedirectResponse:
     settings = get_settings()
 
-    async with db.session_scope(settings) as s:
-        await services.web_update_order_status(
-            s,
-            cafe_id=cafe_id,
-            order_id=order_id,
-            new_status=new_status,
-        )
+    # preserve current filter in redirect
+    status_filter = request.query_params.get("status")
+    base_url = "/orders" + (f"?status={status_filter}" if status_filter else "")
 
-    return _redirect("/orders")
+    # guard against obvious invalid inputs (UI should never send these)
+    allowed_targets = {"accepted", "in_progress", "done"}
+    if new_status not in allowed_targets:
+        return _flash_redirect(base_url, msg="Недопустимый статус.", ok=False)
+
+    try:
+        async with db.session_scope(settings) as s:
+            ok_ = await services.web_update_order_status(
+                s,
+                cafe_id=cafe_id,
+                order_id=order_id,
+                new_status=new_status,
+            )
+            if not ok_:
+                return _flash_redirect(base_url, msg="Заказ не найден.", ok=False)
+    except services.ServiceError as e:
+        # service already produces user-friendly messages
+        return _flash_redirect(base_url, msg=e.message, ok=False)
+    except Exception:
+        return _flash_redirect(base_url, msg="Не удалось обновить статус заказа.", ok=False)
+
+    return _flash_redirect(base_url, msg="Статус заказа обновлён.", ok=True)
 
 
 @router.get("/stoplist", response_class=HTMLResponse)

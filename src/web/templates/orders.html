@@ -15,12 +15,11 @@
         <label class="hint">Статус:</label>
         <select name="status" onchange="this.form.submit()">
           <option value="" {% if not status_filter %}selected{% endif %}>Все</option>
-          <option value="new" {% if status_filter=='new' %}selected{% endif %}>new</option>
-          <option value="paid" {% if status_filter=='paid' %}selected{% endif %}>paid</option>
-          <option value="making" {% if status_filter=='making' %}selected{% endif %}>making</option>
-          <option value="ready" {% if status_filter=='ready' %}selected{% endif %}>ready</option>
-          <option value="done" {% if status_filter=='done' %}selected{% endif %}>done</option>
-          <option value="canceled" {% if status_filter=='canceled' %}selected{% endif %}>canceled</option>
+          <option value="pending_payment" {% if status_filter=='pending_payment' %}selected{% endif %}>ожидает оплаты</option>
+          <option value="paid" {% if status_filter=='paid' %}selected{% endif %}>оплачен</option>
+          <option value="accepted" {% if status_filter=='accepted' %}selected{% endif %}>в работе</option>
+          <option value="in_progress" {% if status_filter=='in_progress' %}selected{% endif %}>готов</option>
+          <option value="done" {% if status_filter=='done' %}selected{% endif %}>выдан</option>
         </select>
 
         <label class="hint">Поиск:</label>
@@ -61,8 +60,16 @@
               <div class="rowcode">{{ o.code }}</div>
             </td>
             <td>
-              {% set st = o.status %}
-              <span class="status s-{{ 'cancel' if st in ['canceled','cancelled'] else st }}">{{ st }}</span>
+              {% set st = (o.status or '') %}
+              {% set st_label_map = {
+                'pending_payment': 'ожидает оплаты',
+                'paid': 'оплачен',
+                'accepted': 'в работе',
+                'in_progress': 'готов',
+                'done': 'выдан'
+              } %}
+              {% set st_label = st_label_map.get(st, st) %}
+              <span class="status s-{{ st }}">{{ st_label }}</span>
             </td>
             <td>
               <div class="items">
@@ -99,25 +106,24 @@
             </td>
             <td>
               <div class="actions">
-                <form method="post" action="/orders/{{ o.id }}/status">
-                  <input type="hidden" name="new_status" value="making" />
-                  <button class="btn small warn" type="submit">В работу</button>
-                </form>
-
-                <form method="post" action="/orders/{{ o.id }}/status">
-                  <input type="hidden" name="new_status" value="ready" />
-                  <button class="btn small ok" type="submit">Готово</button>
-                </form>
-
-                <form method="post" action="/orders/{{ o.id }}/status">
-                  <input type="hidden" name="new_status" value="done" />
-                  <button class="btn small" type="submit">Выдан</button>
-                </form>
-
-                <form method="post" action="/orders/{{ o.id }}/status" onsubmit="return confirm('Отменить заказ #{{ o.id }}?')">
-                  <input type="hidden" name="new_status" value="canceled" />
-                  <button class="btn small bad" type="submit">Отмена</button>
-                </form>
+                {% if st == 'paid' %}
+                  <form method="post" action="/orders/{{ o.id }}/status">
+                    <input type="hidden" name="new_status" value="accepted" />
+                    <button class="btn small warn" type="submit">В работу</button>
+                  </form>
+                {% elif st == 'accepted' %}
+                  <form method="post" action="/orders/{{ o.id }}/status">
+                    <input type="hidden" name="new_status" value="in_progress" />
+                    <button class="btn small ok" type="submit">Готово</button>
+                  </form>
+                {% elif st == 'in_progress' %}
+                  <form method="post" action="/orders/{{ o.id }}/status">
+                    <input type="hidden" name="new_status" value="done" />
+                    <button class="btn small" type="submit">Выдан</button>
+                  </form>
+                {% else %}
+                  <span class="muted">—</span>
+                {% endif %}
               </div>
             </td>
           </tr>

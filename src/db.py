@@ -39,7 +39,7 @@ from sqlalchemy.pool import NullPool
 # ----------------------------
 metadata = MetaData()
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def utcnow() -> datetime:
@@ -254,6 +254,27 @@ order_item_modifiers = Table(
     Column("title_snapshot", String(160), nullable=False),
     Column("price_delta_snapshot", Numeric(10, 2), nullable=False),
     Index("ix_order_item_mods_item", "order_item_id"),
+)
+
+
+# ----------------------------
+# Order status events (outbox)
+# ----------------------------
+order_status_events = Table(
+    "order_status_events",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("order_id", Integer, ForeignKey("orders.id", ondelete="CASCADE"), nullable=False),
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("old_status", String(32), nullable=True),
+    Column("new_status", String(32), nullable=False),
+    Column("attempts", Integer, nullable=False, server_default="0"),
+    Column("last_error", Text, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("sent_at", DateTime(timezone=True), nullable=True),
+    Index("ix_order_status_events_sent_at", "sent_at"),
+    Index("ix_order_status_events_order", "order_id"),
+    Index("ix_order_status_events_user", "user_id"),
 )
 
 
@@ -930,6 +951,7 @@ async def set_order_status(session: AsyncSession, order_id: int, status: str) ->
     return res.rowcount > 0
 
 
+
 async def set_order_payment(
     session: AsyncSession,
     *,
@@ -949,6 +971,85 @@ async def set_order_payment(
             payment_status=payment_status,
             payment_confirmation_url=payment_confirmation_url,
             updated_at=now,
+        )
+    )
+    res = await session.execute(q)
+    return bool(res.rowcount and res.rowcount > 0)
+
+
+# ----------------------------
+# Order status events (outbox)
+# ----------------------------
+async def enqueue_order_status_event(
+    session: AsyncSession,
+    *,
+    order_id: int,
+    user_id: int,
+    old_status: str | None,
+    new_status: str,
+) -> int:
+    """Creates an outbox event to be later sent to user via bot."""
+    now = utcnow()
+    q = (
+        insert(order_status_events)
+        .values(
+            order_id=int(order_id),
+            user_id=int(user_id),
+            old_status=old_status,
+            new_status=str(new_status),
+            attempts=0,
+            last_error=None,
+            created_at=now,
+            sent_at=None,
+        )
+        .returning(order_status_events.c.id)
+    )
+    return int((await session.execute(q)).scalar_one())
+
+
+async def fetch_pending_order_status_events(
+    session: AsyncSession,
+    *,
+    limit: int = 50,
+) -> list[dict]:
+    """Fetches unsent events (sent_at is NULL), oldest first."""
+    q = (
+        select(
+            order_status_events.c.id,
+            order_status_events.c.order_id,
+            order_status_events.c.user_id,
+            order_status_events.c.old_status,
+            order_status_events.c.new_status,
+            order_status_events.c.attempts,
+            order_status_events.c.last_error,
+            order_status_events.c.created_at,
+        )
+        .where(order_status_events.c.sent_at.is_(None))
+        .order_by(order_status_events.c.created_at.asc(), order_status_events.c.id.asc())
+        .limit(int(limit))
+    )
+    rows = (await session.execute(q)).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def mark_order_status_event_sent(session: AsyncSession, event_id: int) -> bool:
+    q = (
+        update(order_status_events)
+        .where(order_status_events.c.id == int(event_id))
+        .values(sent_at=utcnow(), last_error=None)
+    )
+    res = await session.execute(q)
+    return bool(res.rowcount and res.rowcount > 0)
+
+
+async def mark_order_status_event_failed(session: AsyncSession, event_id: int, error: str) -> bool:
+    # keep sent_at = NULL so it can be retried later
+    q = (
+        update(order_status_events)
+        .where(order_status_events.c.id == int(event_id))
+        .values(
+            attempts=order_status_events.c.attempts + 1,
+            last_error=str(error)[:2000],
         )
     )
     res = await session.execute(q)

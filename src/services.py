@@ -730,6 +730,20 @@ async def web_list_orders(
     return [dict(r) for r in rows]
 
 
+# --- Order status transitions for web panel ---
+# No cancellation from web. One-way: paid -> accepted -> in_progress -> done
+WEB_ALLOWED_ORDER_TRANSITIONS: dict[str, set[str]] = {
+    "paid": {"accepted"},
+    "accepted": {"in_progress"},
+    "in_progress": {"done"},
+}
+
+WEB_ALLOWED_TARGET_STATUSES: set[str] = {"accepted", "in_progress", "done"}
+
+
+def _is_allowed_web_status_transition(old_status: str, new_status: str) -> bool:
+    return new_status in WEB_ALLOWED_ORDER_TRANSITIONS.get(old_status, set())
+
 async def web_update_order_status(
     session: AsyncSession,
     *,
@@ -737,18 +751,68 @@ async def web_update_order_status(
     order_id: int,
     new_status: str,
 ) -> bool:
-    """Updates order status if order belongs to cafe."""
+    """Updates order status if order belongs to cafe.
+
+    Rules:
+      - no cancellation from web
+      - transitions are one-way: paid -> in_work -> ready -> delivered
+      - write an outbox event for bot notifications on successful change
+    """
     now = db.utcnow()
 
-    q = (
+    # read current status + owner
+    q_read = select(db.orders.c.status, db.orders.c.user_id).where(
+        and_(db.orders.c.id == order_id, db.orders.c.cafe_id == cafe_id)
+    )
+    row = (await session.execute(q_read)).mappings().first()
+    if not row:
+        return False
+
+    old_status = str(row["status"])
+    user_id = int(row["user_id"])
+
+    # hard block "canceled" and any unknown target
+    if new_status == "canceled":
+        raise Validation("Статус отмены отключён в веб-панели.")
+    if new_status not in WEB_ALLOWED_TARGET_STATUSES:
+        raise Validation("Некорректный статус.")
+
+    # idempotent: already set
+    if new_status == old_status:
+        return True
+
+    # validate transition
+    if not _is_allowed_web_status_transition(old_status, new_status):
+        raise Validation(f"Недопустимый переход статуса: {old_status} → {new_status}.")
+
+    # update with optimistic lock (avoid races)
+    q_upd = (
         db.orders.update()
-        .where(and_(db.orders.c.id == order_id, db.orders.c.cafe_id == cafe_id))
+        .where(
+            and_(
+                db.orders.c.id == order_id,
+                db.orders.c.cafe_id == cafe_id,
+                db.orders.c.status == old_status,
+            )
+        )
         .values(status=new_status, updated_at=now)
         .returning(db.orders.c.id)
     )
 
-    row = (await session.execute(q)).first()
-    return row is not None
+    updated = (await session.execute(q_upd)).first()
+    if updated is None:
+        raise Validation("Статус уже изменился. Обнови страницу и попробуй снова.")
+
+    # outbox event for bot notification
+    await db.enqueue_order_status_event(
+        session,
+        order_id=int(order_id),
+        user_id=int(user_id),
+        old_status=str(old_status),
+        new_status=str(new_status),
+    )
+
+    return True
 
 
 async def web_get_stoplist(session: AsyncSession, *, cafe_id: int) -> dict:
@@ -1440,7 +1504,9 @@ async def web_menu_crud_delete_category(session: AsyncSession, *, cafe_id: int, 
         raise Validation("Нельзя удалить категорию: в ней есть товары. Сначала перенеси/удали товары.")
 
     res = await session.execute(
-        db.categories.delete().where(and_(db.categories.c.id == category_id, db.categories.c.cafe_id == cafe_id))
+        db.categories.delete().where(
+            and_(db.categories.c.id == category_id, db.categories.c.cafe_id == cafe_id)
+        )
     )
     return bool(res.rowcount and res.rowcount > 0)
 
