@@ -8,7 +8,7 @@
           <tr>
             <td>
               <b>{{ o.id }}</b>
-              <div class="muted">{{ o.created_at }}</div>
+              <div class="muted">{{ (o.created_at|string)[:19].replace('T',' ') }}</div>
             </td>
             <td>
               <div class="rowcode">{{ o.code }}</div>
