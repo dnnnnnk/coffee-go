@@ -46,14 +46,24 @@
     <div class="card" style="margin: 12px 0 14px 0; padding:0">
       <div style="padding:14px 16px;border-bottom:1px solid #222;background:#111;font-weight:700">Создать категорию</div>
       <div style="padding:14px 16px">
-        <form method="post" action="/menu/category/create" style="display:flex;gap:10px;flex-wrap:wrap;margin:0;align-items:center">
-          <input name="name" placeholder="Название" required />
-          <input name="sort" type="number" value="0" style="width:120px" />
-          <select name="is_active">
-            <option value="1" selected>active</option>
-            <option value="0">hidden</option>
-          </select>
-          <button class="btn" type="submit">Добавить</button>
+        <form method="post" action="/menu/category/create" style="display:flex;gap:10px;flex-wrap:wrap;margin:0;align-items:flex-end">
+          <div>
+            <div class="muted" style="margin-bottom:4px">Название категории</div>
+            <input name="name" placeholder="Напр. Кофе" required />
+          </div>
+          <div>
+            <div class="muted" style="margin-bottom:4px">Порядок (sort)</div>
+            <input name="sort" type="number" value="0" style="width:120px" />
+          </div>
+          <div>
+            <div class="muted" style="margin-bottom:4px">Виден в меню</div>
+            <select name="is_active">
+              <option value="1" selected>да (active)</option>
+              <option value="0">нет (hidden)</option>
+            </select>
+          </div>
+          <button class="btn" type="submit">Добавить категорию</button>
+          <div class="hint" style="flex-basis:100%;margin-top:6px">sort — порядок в меню: меньше = выше.</div>
         </form>
       </div>
     </div>
@@ -87,18 +97,27 @@
             </div>
             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
               {% if _is_admin %}
-                <form method="post" action="/menu/category/{{ cat.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
-                  <input name="name" value="{{ cat.name }}" style="width:220px" />
-                  <input name="sort" type="number" value="{{ cat_sort }}" style="width:90px" />
-                  <select name="is_active">
-                    <option value="1" {% if cat_active %}selected{% endif %}>active</option>
-                    <option value="0" {% if not cat_active %}selected{% endif %}>hidden</option>
-                  </select>
+                <form method="post" action="/menu/category/{{ cat.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:flex-end">
+                  <div>
+                    <div class="muted" style="margin-bottom:4px">Название</div>
+                    <input name="name" value="{{ cat.name }}" style="width:220px" />
+                  </div>
+                  <div>
+                    <div class="muted" style="margin-bottom:4px">sort</div>
+                    <input name="sort" type="number" value="{{ cat_sort }}" style="width:90px" />
+                  </div>
+                  <div>
+                    <div class="muted" style="margin-bottom:4px">Виден</div>
+                    <select name="is_active">
+                      <option value="1" {% if cat_active %}selected{% endif %}>да</option>
+                      <option value="0" {% if not cat_active %}selected{% endif %}>нет</option>
+                    </select>
+                  </div>
                   <button class="btn small" type="submit">Сохранить</button>
                 </form>
 
                 <form method="post" action="/menu/category/{{ cat.id }}/delete" style="margin:0">
-                  <button class="btn small bad" type="submit" onclick="return confirm('Удалить категорию? (может быть запрещено, если есть товары)')">Удалить</button>
+                  <button class="btn small bad" type="submit" onclick="return confirm('Удалить категорию? Если в ней есть товары, БД может запретить.')">Удалить</button>
                 </form>
               {% endif %}
 
@@ -113,17 +132,33 @@
           <div style="padding:14px 16px">
             {% if _is_admin %}
               <div class="flash" style="margin-bottom:12px">
-                <form method="post" action="/menu/product/create" style="display:flex;gap:10px;flex-wrap:wrap;margin:0;align-items:center">
+                <form method="post" action="/menu/product/create" style="display:flex;gap:10px;flex-wrap:wrap;margin:0;align-items:flex-end">
                   <input type="hidden" name="category_id" value="{{ cat.id }}" />
-                  <input name="name" placeholder="Новый товар" required />
-                  <input name="base_price" placeholder="Цена, напр 210.00" required style="width:160px" />
-                  <input name="description" placeholder="Описание (опц.)" style="min-width:240px;flex:1" />
-                  <input name="sort" type="number" value="0" style="width:90px" />
-                  <select name="is_active">
-                    <option value="1" selected>active</option>
-                    <option value="0">hidden</option>
-                  </select>
-                  <button class="btn" type="submit">Добавить</button>
+                  <div>
+                    <div class="muted" style="margin-bottom:4px">Название товара</div>
+                    <input name="name" placeholder="Напр. Капучино" required />
+                  </div>
+                  <div>
+                    <div class="muted" style="margin-bottom:4px">Цена (base_price)</div>
+                    <input name="base_price" placeholder="Напр. 210.00" required style="width:160px" />
+                  </div>
+                  <div style="min-width:240px;flex:1">
+                    <div class="muted" style="margin-bottom:4px">Описание (опционально)</div>
+                    <input name="description" placeholder="Коротко: классика на каждый день" style="width:100%" />
+                  </div>
+                  <div>
+                    <div class="muted" style="margin-bottom:4px">sort</div>
+                    <input name="sort" type="number" value="0" style="width:90px" />
+                  </div>
+                  <div>
+                    <div class="muted" style="margin-bottom:4px">Виден</div>
+                    <select name="is_active">
+                      <option value="1" selected>да</option>
+                      <option value="0">нет</option>
+                    </select>
+                  </div>
+                  <button class="btn" type="submit">Добавить товар</button>
+                  <div class="hint" style="flex-basis:100%;margin-top:6px">base_price — цена без модификаторов.</div>
                 </form>
               </div>
             {% endif %}
@@ -153,38 +188,69 @@
 
                         {% if _is_admin %}
                           <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-                            <form method="post" action="/menu/product/{{ p.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
-                              <input name="name" value="{{ p.name }}" style="width:220px" />
-                              <input name="base_price" value="{{ '%.2f'|format(p.base_price) }}" style="width:120px" />
-                              <input name="sort" type="number" value="{{ p_sort }}" style="width:90px" />
-                              <select name="is_active">
-                                <option value="1" {% if p_active %}selected{% endif %}>active</option>
-                                <option value="0" {% if not p_active %}selected{% endif %}>hidden</option>
-                              </select>
-                              <button class="btn small" type="submit">OK</button>
+                            <form method="post" action="/menu/product/{{ p.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:flex-end">
+                              <div>
+                                <div class="muted" style="margin-bottom:4px">Название</div>
+                                <input name="name" value="{{ p.name }}" style="width:220px" />
+                              </div>
+                              <div>
+                                <div class="muted" style="margin-bottom:4px">Цена</div>
+                                <input name="base_price" value="{{ '%.2f'|format(p.base_price) }}" style="width:120px" />
+                              </div>
+                              <div>
+                                <div class="muted" style="margin-bottom:4px">sort</div>
+                                <input name="sort" type="number" value="{{ p_sort }}" style="width:90px" />
+                              </div>
+                              <div>
+                                <div class="muted" style="margin-bottom:4px">Виден</div>
+                                <select name="is_active">
+                                  <option value="1" {% if p_active %}selected{% endif %}>да</option>
+                                  <option value="0" {% if not p_active %}selected{% endif %}>нет</option>
+                                </select>
+                              </div>
+                              <button class="btn small" type="submit">Сохранить</button>
                             </form>
 
                             <form method="post" action="/menu/product/{{ p.id }}/delete" style="margin:0">
-                              <button class="btn small bad" type="submit" onclick="return confirm('Скрыть товар?')">Скрыть</button>
+                              <button class="btn small bad" type="submit" onclick="return confirm('Удалить товар? (если есть заказы/связи, БД может запретить)')">Удалить</button>
                             </form>
                           </div>
 
                           <div style="margin-top:10px">
-                            <form method="post" action="/menu/group/create" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
+                            <form method="post" action="/menu/group/create" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:flex-end">
                               <input type="hidden" name="product_id" value="{{ p.id }}" />
-                              <input name="name" placeholder="Новая группа (напр. Молоко)" required style="width:240px" />
-                              <select name="required">
-                                <option value="0" selected>optional</option>
-                                <option value="1">required</option>
-                              </select>
-                              <input name="min_select" type="number" value="0" style="width:90px" />
-                              <input name="max_select" type="number" value="1" style="width:90px" />
-                              <input name="sort" type="number" value="0" style="width:90px" />
-                              <select name="is_active">
-                                <option value="1" selected>active</option>
-                                <option value="0">hidden</option>
-                              </select>
-                              <button class="btn small" type="submit">+ Группа</button>
+                              <div>
+                                <div class="muted" style="margin-bottom:4px">Название группы</div>
+                                <input name="name" placeholder="Напр. Молоко / Размер" required style="width:240px" />
+                              </div>
+                              <div>
+                                <div class="muted" style="margin-bottom:4px">Обязательная?</div>
+                                <select name="required">
+                                  <option value="0" selected>нет</option>
+                                  <option value="1">да</option>
+                                </select>
+                              </div>
+                              <div>
+                                <div class="muted" style="margin-bottom:4px">min</div>
+                                <input name="min_select" type="number" value="0" style="width:90px" />
+                              </div>
+                              <div>
+                                <div class="muted" style="margin-bottom:4px">max</div>
+                                <input name="max_select" type="number" value="1" style="width:90px" />
+                              </div>
+                              <div>
+                                <div class="muted" style="margin-bottom:4px">sort</div>
+                                <input name="sort" type="number" value="0" style="width:90px" />
+                              </div>
+                              <div>
+                                <div class="muted" style="margin-bottom:4px">Видна</div>
+                                <select name="is_active">
+                                  <option value="1" selected>да</option>
+                                  <option value="0">нет</option>
+                                </select>
+                              </div>
+                              <button class="btn small" type="submit">Добавить группу</button>
+                              <div class="hint" style="flex-basis:100%;margin-top:6px">min/max — сколько модификаторов можно выбрать в группе.</div>
                             </form>
                           </div>
                         {% endif %}
@@ -217,24 +283,42 @@
                                     </div>
                                     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
                                       {% if _is_admin %}
-                                        <form method="post" action="/menu/group/{{ g.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
-                                          <input name="name" value="{{ g.name }}" style="width:200px" />
-                                          <select name="required">
-                                            <option value="0" {% if not g.required %}selected{% endif %}>optional</option>
-                                            <option value="1" {% if g.required %}selected{% endif %}>required</option>
-                                          </select>
-                                          <input name="min_select" type="number" value="{{ g.min_select }}" style="width:80px" />
-                                          <input name="max_select" type="number" value="{{ g.max_select }}" style="width:80px" />
-                                          <input name="sort" type="number" value="{{ g_sort }}" style="width:80px" />
-                                          <select name="is_active">
-                                            <option value="1" {% if g_active %}selected{% endif %}>active</option>
-                                            <option value="0" {% if not g_active %}selected{% endif %}>hidden</option>
-                                          </select>
-                                          <button class="btn small" type="submit">OK</button>
+                                        <form method="post" action="/menu/group/{{ g.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:flex-end">
+                                          <div>
+                                            <div class="muted" style="margin-bottom:4px">Название</div>
+                                            <input name="name" value="{{ g.name }}" style="width:200px" />
+                                          </div>
+                                          <div>
+                                            <div class="muted" style="margin-bottom:4px">Обяз.</div>
+                                            <select name="required">
+                                              <option value="0" {% if not g.required %}selected{% endif %}>нет</option>
+                                              <option value="1" {% if g.required %}selected{% endif %}>да</option>
+                                            </select>
+                                          </div>
+                                          <div>
+                                            <div class="muted" style="margin-bottom:4px">min</div>
+                                            <input name="min_select" type="number" value="{{ g.min_select }}" style="width:80px" />
+                                          </div>
+                                          <div>
+                                            <div class="muted" style="margin-bottom:4px">max</div>
+                                            <input name="max_select" type="number" value="{{ g.max_select }}" style="width:80px" />
+                                          </div>
+                                          <div>
+                                            <div class="muted" style="margin-bottom:4px">sort</div>
+                                            <input name="sort" type="number" value="{{ g_sort }}" style="width:80px" />
+                                          </div>
+                                          <div>
+                                            <div class="muted" style="margin-bottom:4px">Видна</div>
+                                            <select name="is_active">
+                                              <option value="1" {% if g_active %}selected{% endif %}>да</option>
+                                              <option value="0" {% if not g_active %}selected{% endif %}>нет</option>
+                                            </select>
+                                          </div>
+                                          <button class="btn small" type="submit">Сохранить</button>
                                         </form>
 
                                         <form method="post" action="/menu/group/{{ g.id }}/delete" style="margin:0">
-                                          <button class="btn small bad" type="submit" onclick="return confirm('Скрыть группу?')">Скрыть</button>
+                                          <button class="btn small bad" type="submit" onclick="return confirm('Удалить группу модификаторов?')">Удалить</button>
                                         </form>
                                       {% endif %}
 
@@ -248,16 +332,29 @@
 
                                   {% if _is_admin %}
                                     <div style="margin-top:10px">
-                                      <form method="post" action="/menu/modifier/create" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
+                                      <form method="post" action="/menu/modifier/create" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:flex-end">
                                         <input type="hidden" name="group_id" value="{{ g.id }}" />
-                                        <input name="name" placeholder="Новый модификатор" required style="width:220px" />
-                                        <input name="price_delta" placeholder="delta (напр 40.00)" value="0" style="width:140px" />
-                                        <input name="sort" type="number" value="0" style="width:80px" />
-                                        <select name="is_active">
-                                          <option value="1" selected>active</option>
-                                          <option value="0">hidden</option>
-                                        </select>
-                                        <button class="btn small" type="submit">+ Мод</button>
+                                        <div>
+                                          <div class="muted" style="margin-bottom:4px">Название модификатора</div>
+                                          <input name="name" placeholder="Напр. Овсяное" required style="width:220px" />
+                                        </div>
+                                        <div>
+                                          <div class="muted" style="margin-bottom:4px">Δ к цене (price_delta)</div>
+                                          <input name="price_delta" placeholder="Напр. 40.00" value="0" style="width:140px" />
+                                        </div>
+                                        <div>
+                                          <div class="muted" style="margin-bottom:4px">sort</div>
+                                          <input name="sort" type="number" value="0" style="width:80px" />
+                                        </div>
+                                        <div>
+                                          <div class="muted" style="margin-bottom:4px">Виден</div>
+                                          <select name="is_active">
+                                            <option value="1" selected>да</option>
+                                            <option value="0">нет</option>
+                                          </select>
+                                        </div>
+                                        <button class="btn small" type="submit">Добавить модификатор</button>
+                                        <div class="hint" style="flex-basis:100%;margin-top:6px">price_delta может быть 0 или положительным (и даже отрицательным, если нужно скидку).</div>
                                       </form>
                                     </div>
                                   {% endif %}
@@ -283,19 +380,31 @@
 
                                             <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
                                               {% if _is_admin %}
-                                                <form method="post" action="/menu/modifier/{{ m.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:center">
-                                                  <input name="name" value="{{ m.name }}" style="width:200px" />
-                                                  <input name="price_delta" value="{{ '%.2f'|format(m.price_delta or 0) }}" style="width:120px" />
-                                                  <input name="sort" type="number" value="{{ m_sort }}" style="width:80px" />
-                                                  <select name="is_active">
-                                                    <option value="1" {% if m_active %}selected{% endif %}>active</option>
-                                                    <option value="0" {% if not m_active %}selected{% endif %}>hidden</option>
-                                                  </select>
-                                                  <button class="btn small" type="submit">OK</button>
+                                                <form method="post" action="/menu/modifier/{{ m.id }}/update" style="display:flex;gap:8px;flex-wrap:wrap;margin:0;align-items:flex-end">
+                                                  <div>
+                                                    <div class="muted" style="margin-bottom:4px">Название</div>
+                                                    <input name="name" value="{{ m.name }}" style="width:200px" />
+                                                  </div>
+                                                  <div>
+                                                    <div class="muted" style="margin-bottom:4px">Δ цена</div>
+                                                    <input name="price_delta" value="{{ '%.2f'|format(m.price_delta or 0) }}" style="width:120px" />
+                                                  </div>
+                                                  <div>
+                                                    <div class="muted" style="margin-bottom:4px">sort</div>
+                                                    <input name="sort" type="number" value="{{ m_sort }}" style="width:80px" />
+                                                  </div>
+                                                  <div>
+                                                    <div class="muted" style="margin-bottom:4px">Виден</div>
+                                                    <select name="is_active">
+                                                      <option value="1" {% if m_active %}selected{% endif %}>да</option>
+                                                      <option value="0" {% if not m_active %}selected{% endif %}>нет</option>
+                                                    </select>
+                                                  </div>
+                                                  <button class="btn small" type="submit">Сохранить</button>
                                                 </form>
 
                                                 <form method="post" action="/menu/modifier/{{ m.id }}/delete" style="margin:0">
-                                                  <button class="btn small bad" type="submit" onclick="return confirm('Скрыть модификатор?')">Скрыть</button>
+                                                  <button class="btn small bad" type="submit" onclick="return confirm('Удалить модификатор?')">Удалить</button>
                                                 </form>
                                               {% endif %}
 
