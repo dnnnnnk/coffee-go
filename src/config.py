@@ -233,14 +233,13 @@ class Settings(BaseSettings):
             if not self.PAYMENT_RETURN_URL:
                 raise ValueError("PAYMENTS_ENABLED=1 requires PAYMENT_RETURN_URL")
 
-            if self.YOOKASSA_SPLIT_ENABLED:
-                if self.PLATFORM_FEE_MODE not in {"fixed", "percent", "none"}:
-                    raise ValueError("PLATFORM_FEE_MODE must be fixed/percent/none")
-                if self.PLATFORM_FEE_MODE == "fixed" and self.PLATFORM_FEE_AMOUNT < 0:
-                    raise ValueError("PLATFORM_FEE_AMOUNT must be >= 0")
-                if self.PLATFORM_FEE_MODE == "percent":
-                    if self.PLATFORM_FEE_PERCENT < 0 or self.PLATFORM_FEE_PERCENT > 100:
-                        raise ValueError("PLATFORM_FEE_PERCENT must be between 0 and 100")
+            if self.PLATFORM_FEE_MODE not in {"fixed", "percent", "none"}:
+                raise ValueError("PLATFORM_FEE_MODE must be fixed/percent/none")
+            if self.PLATFORM_FEE_MODE == "fixed" and self.PLATFORM_FEE_AMOUNT < 0:
+                raise ValueError("PLATFORM_FEE_AMOUNT must be >= 0")
+            if self.PLATFORM_FEE_MODE == "percent":
+                if self.PLATFORM_FEE_PERCENT < 0 or self.PLATFORM_FEE_PERCENT > 100:
+                    raise ValueError("PLATFORM_FEE_PERCENT must be between 0 and 100")
 
             # Webhooks strongly recommended if payments enabled
             if not self.WEBHOOKS_ENABLED:

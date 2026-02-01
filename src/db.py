@@ -7,6 +7,7 @@ from typing import Iterable, Sequence
 from sqlalchemy import (
     JSON,
     Boolean,
+    BigInteger,
     CheckConstraint,
     Column,
     DateTime,
@@ -61,7 +62,7 @@ schema_meta = Table(
 users = Table(
     "users",
     metadata,
-    Column("id", Integer, primary_key=True),  # tg user id
+    Column("id", BigInteger, primary_key=True),  # tg user id
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
@@ -182,7 +183,7 @@ cart_items = Table(
     "cart_items",
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("user_id", BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
     Column("cafe_id", Integer, ForeignKey("cafes.id", ondelete="CASCADE"), nullable=False),
     Column("product_id", Integer, ForeignKey("products.id", ondelete="RESTRICT"), nullable=False),
     Column("modifiers_key", String(256), nullable=False, server_default=""),  # sorted modifier ids "1,5,9"
@@ -201,7 +202,7 @@ orders = Table(
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("code", String(16), nullable=False),  # выдача по коду
-    Column("user_id", Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("user_id", BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
     Column("cafe_id", Integer, ForeignKey("cafes.id", ondelete="RESTRICT"), nullable=False),
     Column(
         "status",
@@ -265,7 +266,7 @@ order_status_events = Table(
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("order_id", Integer, ForeignKey("orders.id", ondelete="CASCADE"), nullable=False),
-    Column("user_id", Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("user_id", BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
     Column("old_status", String(32), nullable=True),
     Column("new_status", String(32), nullable=False),
     Column("attempts", Integer, nullable=False, server_default="0"),

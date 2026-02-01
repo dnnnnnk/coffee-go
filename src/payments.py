@@ -232,7 +232,11 @@ def get_yookassa_client(settings) -> YooKassaClient:
 
 
 def build_order_description(settings, *, order_id: int) -> str:
-    prefix = getattr(settings, "ORDER_DESCRIPTION_PREFIX", "EasyCoffee order")
+    prefix = getattr(
+        settings,
+        "PAYMENT_DESCRIPTION_PREFIX",
+        getattr(settings, "ORDER_DESCRIPTION_PREFIX", "EasyCoffee order"),
+    )
     return f"{prefix} #{order_id}"
 
 
@@ -245,7 +249,6 @@ async def create_payment_for_order(
     return_url: str,
 ) -> PaymentCreateResult:
 
-    # mock: сразу успех
     if is_mock_mode(settings):
         mock_payment_id = f"mock-{order_id}"
         await session.execute(
@@ -278,7 +281,6 @@ async def create_payment_for_order(
             db.orders.c.total,
             db.orders.c.cafe_id,
             db.cafes.c.name.label("cafe_name"),
-            db.cafes.c.yookassa_account_id,
         )
         .select_from(db.orders.join(db.cafes, db.orders.c.cafe_id == db.cafes.c.id))
         .where(db.orders.c.id == order_id)
@@ -287,26 +289,27 @@ async def create_payment_for_order(
     if not row:
         raise PaymentError("Заказ не найден.")
 
-    cafe_account_id = str(row.get("yookassa_account_id") or "").strip()
-    if not cafe_account_id:
-        raise PaymentError("У кофейни не настроен yookassa_account_id для сплита.")
-
     coffee_amount = Decimal(str(row["total"]))
 
-    fee_fixed = Decimal(str(getattr(settings, "PLATFORM_FEE_FIXED", "0")))
-    fee_pct = Decimal(str(getattr(settings, "PLATFORM_FEE_PCT", "0")))
-    platform_fee = fee_fixed
-    if fee_pct != 0:
-        platform_fee += (coffee_amount * fee_pct).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
+    fee_mode = str(getattr(settings, "PLATFORM_FEE_MODE", "fixed")).lower()
+    fee_amount = Decimal(str(getattr(settings, "PLATFORM_FEE_AMOUNT", "0")))
+    fee_percent = Decimal(str(getattr(settings, "PLATFORM_FEE_PERCENT", "0")))
+
+    platform_fee = Decimal("0.00")
+    if fee_mode == "fixed":
+        platform_fee = fee_amount
+    elif fee_mode == "percent":
+        if fee_percent != 0:
+            platform_fee = (coffee_amount * fee_percent / Decimal("100")).quantize(
+                TWOPLACES, rounding=ROUND_HALF_UP
+            )
+    elif fee_mode == "none":
+        platform_fee = Decimal("0.00")
+
     if platform_fee < 0:
         platform_fee = Decimal("0.00")
 
     total_amount = (coffee_amount + platform_fee).quantize(TWOPLACES, rounding=ROUND_HALF_UP)
-
-    transfers = [{
-        "account_id": cafe_account_id,
-        "amount": {"value": money_str(coffee_amount), "currency": str(getattr(settings, "CURRENCY", "RUB"))},
-    }]
 
     res = await client.create_payment(
         amount=total_amount,
@@ -325,7 +328,6 @@ async def create_payment_for_order(
         },
         notification_url=None,
         receipt=None,
-        transfers=transfers,
     )
 
     await session.execute(
