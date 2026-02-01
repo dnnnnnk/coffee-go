@@ -231,13 +231,48 @@ def get_yookassa_client(settings) -> YooKassaClient:
     )
 
 
-def build_order_description(settings, *, order_id: int) -> str:
-    prefix = getattr(
-        settings,
-        "PAYMENT_DESCRIPTION_PREFIX",
-        getattr(settings, "ORDER_DESCRIPTION_PREFIX", "EasyCoffee order"),
-    )
-    return f"{prefix} #{order_id}"
+def build_order_description(
+    settings,
+    *,
+    cafe_name: str | None = None,
+    total_amount: Decimal | None = None,
+    order_id: int | None = None,
+) -> str:
+    """Описание платежа для ЮKassa (видно в ЛК).
+
+    Требования:
+    - коротко
+    - включает кофейню и сумму
+    - не превышает 128 символов
+    """
+
+    def _clean_name(name: str) -> str:
+        s = " ".join((name or "").split())
+        return s.strip()
+
+    def _money_human(d: Decimal) -> str:
+        # "1234.00" -> "1234"; "1234.50" -> "1234.50"
+        s = money_str(d)
+        return s[:-3] if s.endswith(".00") else s
+
+    name = _clean_name(cafe_name or getattr(settings, "PAYMENT_SHOP_NAME", "") or "Кофейня")
+
+    if total_amount is not None:
+        amount_txt = f"{_money_human(total_amount)} ₽"
+        desc = f"{name} • {amount_txt}"
+    else:
+        # fallback: как раньше
+        prefix = getattr(
+            settings,
+            "PAYMENT_DESCRIPTION_PREFIX",
+            getattr(settings, "ORDER_DESCRIPTION_PREFIX", "Take Cup order"),
+        )
+        if order_id is None:
+            desc = str(prefix)
+        else:
+            desc = f"{prefix} #{order_id}"
+
+    return desc[:128]
 
 
 async def create_payment_for_order(
@@ -314,7 +349,12 @@ async def create_payment_for_order(
     res = await client.create_payment(
         amount=total_amount,
         currency=str(getattr(settings, "CURRENCY", "RUB")),
-        description=build_order_description(settings, order_id=order_id),
+        description=build_order_description(
+            settings,
+            cafe_name=str(row.get("cafe_name") or ""),
+            total_amount=total_amount,
+            order_id=order_id,
+        ),
         return_url=return_url,
         capture=bool(getattr(settings, "PAYMENT_CAPTURE", True)),
         idempotence_key=f"order:{order_id}",
