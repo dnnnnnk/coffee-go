@@ -1,0 +1,146 @@
+{% extends "_base.html" %}
+{% set show_nav = false %}
+
+{% block title %}Super Admin • Кофейни{% endblock %}
+
+{% block content %}
+  <div class="toolbar" style="margin-bottom:16px">
+    <div class="left">
+      <h1 style="margin:0">Super Admin</h1>
+      <span class="hint">Управление всеми кофейнями и их доступом в веб-панель</span>
+    </div>
+    <form method="post" action="/super-admin/logout" style="margin:0">
+      <button class="btn bad" type="submit">Выйти</button>
+    </form>
+  </div>
+
+  {% if flash_message %}
+    <div class="flash {{ 'ok' if flash_ok else 'bad' }}">{{ flash_message }}</div>
+  {% endif %}
+
+  <div class="card" style="margin-bottom:16px">
+    <h2 style="margin:0 0 12px 0;font-size:18px">Создать кофейню</h2>
+    <form method="post" action="/super-admin/cafes/create" style="display:grid;grid-template-columns:repeat(12,1fr);gap:10px;align-items:end;margin:0">
+      <div style="grid-column:span 4">
+        <div class="muted" style="margin-bottom:4px">Название</div>
+        <input name="name" required maxlength="128" placeholder="Напр. Coffee Point" />
+      </div>
+      <div style="grid-column:span 4">
+        <div class="muted" style="margin-bottom:4px">Юр. название (опционально)</div>
+        <input name="legal_name" maxlength="256" placeholder="ООО ..." />
+      </div>
+      <div style="grid-column:span 4">
+        <div class="muted" style="margin-bottom:4px">Логин для входа кофейни</div>
+        <input name="web_login" required maxlength="64" placeholder="cafe_login" />
+      </div>
+
+      <div style="grid-column:span 4">
+        <div class="muted" style="margin-bottom:4px">Пароль для входа</div>
+        <input name="web_password" type="password" required maxlength="128" placeholder="Пароль" />
+      </div>
+      <div style="grid-column:span 4">
+        <div class="muted" style="margin-bottom:4px">Админ-пароль кофейни</div>
+        <input name="admin_password" type="password" required maxlength="128" placeholder="Админ-пароль" />
+      </div>
+      <div style="grid-column:span 2">
+        <div class="muted" style="margin-bottom:4px">Активна</div>
+        <select name="is_active">
+          <option value="1" selected>да</option>
+          <option value="0">нет</option>
+        </select>
+      </div>
+      <div style="grid-column:span 2">
+        <button class="btn ok" type="submit" style="width:100%">Создать</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card" style="padding:0">
+    <div style="padding:14px 16px;border-bottom:1px solid #222;background:#111;font-weight:700">Все кофейни</div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:70px">ID</th>
+          <th style="width:220px">Кофейня</th>
+          <th>Доступы</th>
+          <th style="width:180px">Статусы</th>
+          <th style="width:170px">Обновлено</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if not cafes or cafes|length == 0 %}
+          <tr>
+            <td colspan="5" class="muted">Пока нет кофеен.</td>
+          </tr>
+        {% else %}
+          {% for cafe in cafes %}
+            <tr>
+              <td><b>#{{ cafe.id }}</b></td>
+              <td>
+                <div style="font-weight:700">{{ cafe.name }}</div>
+                {% if cafe.legal_name %}
+                  <div class="muted" style="margin-top:4px">{{ cafe.legal_name }}</div>
+                {% endif %}
+                <div class="muted" style="margin-top:6px">Создана: {{ cafe.created_at }}</div>
+              </td>
+              <td>
+                <form method="post" action="/super-admin/cafes/{{ cafe.id }}/update" style="display:grid;grid-template-columns:repeat(12,1fr);gap:8px;align-items:end;margin:0">
+                  <div style="grid-column:span 4">
+                    <div class="muted" style="margin-bottom:4px">Название</div>
+                    <input name="name" value="{{ cafe.name }}" maxlength="128" required />
+                  </div>
+                  <div style="grid-column:span 4">
+                    <div class="muted" style="margin-bottom:4px">Юр. название</div>
+                    <input name="legal_name" value="{{ cafe.legal_name or '' }}" maxlength="256" />
+                  </div>
+                  <div style="grid-column:span 4">
+                    <div class="muted" style="margin-bottom:4px">Логин</div>
+                    <input name="web_login" value="{{ cafe.web_login or '' }}" maxlength="64" required />
+                  </div>
+
+                  <div style="grid-column:span 4">
+                    <div class="muted" style="margin-bottom:4px">Новый пароль входа</div>
+                    <input name="web_password" type="password" maxlength="128" placeholder="Оставь пустым, чтобы не менять" />
+                  </div>
+                  <div style="grid-column:span 4">
+                    <div class="muted" style="margin-bottom:4px">Новый админ-пароль</div>
+                    <input name="admin_password" type="password" maxlength="128" placeholder="Оставь пустым, чтобы не менять" />
+                  </div>
+                  <div style="grid-column:span 2">
+                    <div class="muted" style="margin-bottom:4px">Активна</div>
+                    <select name="is_active">
+                      <option value="1" {% if cafe.is_active %}selected{% endif %}>да</option>
+                      <option value="0" {% if not cafe.is_active %}selected{% endif %}>нет</option>
+                    </select>
+                  </div>
+                  <div style="grid-column:span 2">
+                    <button class="btn small" type="submit" style="width:100%">Сохранить</button>
+                  </div>
+                </form>
+              </td>
+              <td>
+                {% if cafe.is_active %}
+                  <div><span class="status s-paid">active</span></div>
+                {% else %}
+                  <div><span class="status s-cancel">inactive</span></div>
+                {% endif %}
+
+                {% if cafe.is_overloaded %}
+                  <div style="margin-top:6px"><span class="status s-making">overloaded</span></div>
+                {% else %}
+                  <div style="margin-top:6px"><span class="status s-new">normal</span></div>
+                {% endif %}
+
+                <div class="muted" style="margin-top:8px">
+                  web-pass: {{ 'yes' if cafe.has_web_password else 'no' }}<br />
+                  admin-pass: {{ 'yes' if cafe.has_admin_password else 'no' }}
+                </div>
+              </td>
+              <td class="muted">{{ cafe.updated_at }}</td>
+            </tr>
+          {% endfor %}
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}
