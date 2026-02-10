@@ -148,6 +148,13 @@ class Settings(BaseSettings):
     # Admin unlock: доп-пароль внутри веба
     WEB_ADMIN_UNLOCK_TTL_MIN: int = Field(default=30, ge=1, le=1440, description="Сколько минут действует admin-unlock")
 
+    # Super-admin web access (для управления всеми кофейнями)
+    WEB_SUPERADMIN_LOGIN: str = Field(default="superadmin", description="Логин супер-админа веб-панели")
+    WEB_SUPERADMIN_PASSWORD: str = Field(
+        default="superadmin",
+        description="Пароль супер-админа (plain или bcrypt hash, начинающийся с $2)",
+    )
+
 
     # ----------------------------
     # Webhook (для подтверждения оплаты и веб-панели позже)

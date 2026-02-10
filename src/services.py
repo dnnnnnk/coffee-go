@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
+import secrets
 import bcrypt  # type: ignore
 from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
@@ -672,6 +673,10 @@ def _verify_password(password: str, password_hash: str | None) -> bool:
 
 async def web_auth_login(session: AsyncSession, *, login: str, password: str) -> int | None:
     """Return cafe_id if credentials are valid, otherwise None."""
+    login = (login or "").strip()
+    if not login:
+        return None
+
     q = select(
         db.cafes.c.id,
         db.cafes.c.web_password_hash,
@@ -698,6 +703,177 @@ async def web_admin_unlock(session: AsyncSession, *, cafe_id: int, admin_passwor
     if not row:
         return False
     return _verify_password(admin_password, row.get("admin_password_hash"))
+
+
+def web_superadmin_auth(settings, *, login: str, password: str) -> bool:
+    expected_login = str(getattr(settings, "WEB_SUPERADMIN_LOGIN", "") or "").strip()
+    expected_secret = str(getattr(settings, "WEB_SUPERADMIN_PASSWORD", "") or "")
+    login = (login or "").strip()
+    password = password or ""
+
+    if not expected_login or not expected_secret:
+        return False
+
+    if not secrets.compare_digest(login, expected_login):
+        return False
+
+    if expected_secret.startswith("$2"):
+        return _verify_password(password, expected_secret)
+
+    return secrets.compare_digest(password, expected_secret)
+
+
+def _normalize_web_login(raw: str | None) -> str:
+    return (raw or "").strip()
+
+
+async def _find_cafe_id_by_web_login(session: AsyncSession, web_login: str) -> int | None:
+    q = select(db.cafes.c.id).where(db.cafes.c.web_login == web_login).limit(1)
+    row = (await session.execute(q)).first()
+    return int(row[0]) if row else None
+
+
+async def web_superadmin_list_cafes(session: AsyncSession) -> list[dict]:
+    q = (
+        select(
+            db.cafes.c.id,
+            db.cafes.c.name,
+            db.cafes.c.legal_name,
+            db.cafes.c.web_login,
+            db.cafes.c.is_active,
+            db.cafes.c.is_overloaded,
+            db.cafes.c.web_password_hash,
+            db.cafes.c.admin_password_hash,
+            db.cafes.c.created_at,
+            db.cafes.c.updated_at,
+        )
+        .order_by(db.cafes.c.id.asc())
+    )
+    rows = (await session.execute(q)).mappings().all()
+    out: list[dict] = []
+    for row in rows:
+        item = dict(row)
+        out.append(
+            {
+                "id": int(item["id"]),
+                "name": str(item["name"]),
+                "legal_name": item.get("legal_name"),
+                "web_login": item.get("web_login"),
+                "is_active": bool(item.get("is_active", True)),
+                "is_overloaded": bool(item.get("is_overloaded", False)),
+                "has_web_password": bool(item.get("web_password_hash")),
+                "has_admin_password": bool(item.get("admin_password_hash")),
+                "created_at": item.get("created_at"),
+                "updated_at": item.get("updated_at"),
+            }
+        )
+    return out
+
+
+async def web_superadmin_create_cafe(
+    session: AsyncSession,
+    *,
+    name: str,
+    web_login: str,
+    web_password: str,
+    admin_password: str,
+    legal_name: str | None = None,
+    is_active: bool = True,
+) -> int:
+    name = (name or "").strip()
+    if not name:
+        raise Validation("Название кофейни не может быть пустым.")
+
+    login_norm = _normalize_web_login(web_login)
+    if not login_norm:
+        raise Validation("Логин кофейни не может быть пустым.")
+
+    if not (web_password or "").strip():
+        raise Validation("Пароль для входа не может быть пустым.")
+    if not (admin_password or "").strip():
+        raise Validation("Админ-пароль не может быть пустым.")
+
+    existing_login_owner = await _find_cafe_id_by_web_login(session, login_norm)
+    if existing_login_owner is not None:
+        raise Validation("Такой логин уже используется другой кофейней.")
+
+    now = db.utcnow()
+    values: dict[str, Any] = {
+        "name": name,
+        "legal_name": (legal_name or "").strip() or None,
+        "web_login": login_norm,
+        "web_password_hash": hash_password(web_password),
+        "admin_password_hash": hash_password(admin_password),
+        "is_active": bool(is_active),
+        "is_overloaded": False,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    try:
+        row = (
+            await session.execute(
+                db.cafes.insert().values(**values).returning(db.cafes.c.id)
+            )
+        ).scalar_one()
+        return int(row)
+    except IntegrityError as e:
+        raise Validation(f"Не удалось создать кофейню: {e}") from e
+
+
+async def web_superadmin_update_cafe(
+    session: AsyncSession,
+    *,
+    cafe_id: int,
+    name: str | None = None,
+    legal_name: str | None = None,
+    web_login: str | None = None,
+    web_password: str | None = None,
+    admin_password: str | None = None,
+    is_active: bool | None = None,
+) -> bool:
+    values: dict[str, Any] = {"updated_at": db.utcnow()}
+
+    if name is not None:
+        nm = (name or "").strip()
+        if not nm:
+            raise Validation("Название кофейни не может быть пустым.")
+        values["name"] = nm
+
+    if legal_name is not None:
+        values["legal_name"] = (legal_name or "").strip() or None
+
+    if web_login is not None:
+        login_norm = _normalize_web_login(web_login)
+        if not login_norm:
+            raise Validation("Логин кофейни не может быть пустым.")
+        existing_login_owner = await _find_cafe_id_by_web_login(session, login_norm)
+        if existing_login_owner is not None and int(existing_login_owner) != int(cafe_id):
+            raise Validation("Такой логин уже используется другой кофейней.")
+        values["web_login"] = login_norm
+
+    if web_password is not None:
+        pwd = (web_password or "").strip()
+        if not pwd:
+            raise Validation("Пароль для входа не может быть пустым.")
+        values["web_password_hash"] = hash_password(pwd)
+
+    if admin_password is not None:
+        admin_pwd = (admin_password or "").strip()
+        if not admin_pwd:
+            raise Validation("Админ-пароль не может быть пустым.")
+        values["admin_password_hash"] = hash_password(admin_pwd)
+
+    if is_active is not None:
+        values["is_active"] = bool(is_active)
+
+    q = (
+        db.cafes.update()
+        .where(db.cafes.c.id == int(cafe_id))
+        .values(**values)
+        .returning(db.cafes.c.id)
+    )
+    return (await session.execute(q)).first() is not None
 
 
 async def web_list_orders(

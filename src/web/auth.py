@@ -10,6 +10,7 @@ from starlette.requests import Request
 # --- session keys ---
 SESSION_KEY_CAFE_ID = "cafe_id"
 SESSION_KEY_ADMIN_UNTIL = "admin_until"  # ISO datetime
+SESSION_KEY_SUPER_ADMIN = "super_admin"
 
 
 def _utcnow() -> datetime:
@@ -44,9 +45,14 @@ def is_admin(request: Request) -> bool:
     return bool(until and until > _utcnow())
 
 
+def is_super_admin(request: Request) -> bool:
+    return bool(request.session.get(SESSION_KEY_SUPER_ADMIN) is True)
+
+
 def set_session(request: Request, cafe_id: int) -> None:
     request.session[SESSION_KEY_CAFE_ID] = int(cafe_id)
     request.session.pop(SESSION_KEY_ADMIN_UNTIL, None)
+    request.session.pop(SESSION_KEY_SUPER_ADMIN, None)
 
 
 def clear_session(request: Request) -> None:
@@ -61,6 +67,17 @@ def set_admin(request: Request, value: bool, *, ttl_min: int = 30) -> None:
     ttl_min = int(ttl_min) if ttl_min and int(ttl_min) > 0 else 30
     until = _utcnow() + timedelta(minutes=ttl_min)
     request.session[SESSION_KEY_ADMIN_UNTIL] = until.isoformat()
+
+
+def set_super_admin(request: Request, value: bool) -> None:
+    if not value:
+        request.session.pop(SESSION_KEY_SUPER_ADMIN, None)
+        return
+
+    # Super-admin is a separate role from cafe operator session.
+    request.session.pop(SESSION_KEY_CAFE_ID, None)
+    request.session.pop(SESSION_KEY_ADMIN_UNTIL, None)
+    request.session[SESSION_KEY_SUPER_ADMIN] = True
 
 
 # =========================
@@ -101,5 +118,19 @@ def admin_required(
             raise HTTPException(status_code=303, headers={"Location": redirect_to})
 
         return cafe_id
+
+    return dep
+
+
+def super_admin_required(redirect_to: str = "/super-admin/login"):
+    """
+    FastAPI dependency: requires super-admin session.
+    Usage:
+        _ok: bool = Depends(super_admin_required())
+    """
+    async def dep(request: Request) -> bool:
+        if not is_super_admin(request):
+            raise HTTPException(status_code=303, headers={"Location": redirect_to})
+        return True
 
     return dep

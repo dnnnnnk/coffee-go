@@ -14,9 +14,12 @@ from .auth import (
     clear_session,
     get_cafe_id,
     is_admin,
+    is_super_admin,
     login_required,
     set_admin,
     set_session,
+    set_super_admin,
+    super_admin_required,
 )
 
 
@@ -45,6 +48,8 @@ async def orders_tbody_get(
 
 @router.get("/", include_in_schema=False)
 async def root(request: Request) -> RedirectResponse:
+    if is_super_admin(request):
+        return _redirect("/super-admin/cafes")
     if get_cafe_id(request) is not None:
         return _redirect("/orders")
     return RedirectResponse(url="/login", status_code=302)
@@ -94,6 +99,8 @@ def _flash_redirect(url: str, *, msg: str, ok: bool = True) -> RedirectResponse:
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_get(request: Request) -> HTMLResponse:
+    if is_super_admin(request):
+        return _redirect("/super-admin/cafes")
     if get_cafe_id(request) is not None:
         return _redirect("/orders")
 
@@ -113,6 +120,9 @@ async def login_post(
     login: str = Form(...),
     password: str = Form(...),
 ) -> Response:
+    if is_super_admin(request):
+        return _redirect("/super-admin/cafes")
+
     settings = get_settings()
 
     async with db.session_scope(settings) as s:
@@ -136,6 +146,156 @@ async def login_post(
 async def logout_post(request: Request) -> RedirectResponse:
     clear_session(request)
     return _redirect("/login")
+
+
+@router.get("/super-admin/login", response_class=HTMLResponse)
+async def super_admin_login_get(request: Request) -> HTMLResponse:
+    if is_super_admin(request):
+        return _redirect("/super-admin/cafes")
+
+    return _templates(request).TemplateResponse(
+        "super_admin_login.html",
+        {
+            "request": request,
+            "error": None,
+        },
+    )
+
+
+@router.post("/super-admin/login")
+async def super_admin_login_post(
+    request: Request,
+    login: str = Form(...),
+    password: str = Form(...),
+) -> Response:
+    settings = get_settings()
+    ok = services.web_superadmin_auth(settings, login=login, password=password)
+    if not ok:
+        return _templates(request).TemplateResponse(
+            "super_admin_login.html",
+            {
+                "request": request,
+                "error": "Неверный логин или пароль super-admin.",
+            },
+            status_code=401,
+        )
+
+    set_super_admin(request, True)
+    return _redirect("/super-admin/cafes")
+
+
+@router.post("/super-admin/logout")
+async def super_admin_logout_post(request: Request) -> RedirectResponse:
+    clear_session(request)
+    return _redirect("/super-admin/login")
+
+
+@router.get("/super-admin", include_in_schema=False)
+async def super_admin_root(
+    _allowed: bool = Depends(super_admin_required()),
+) -> RedirectResponse:
+    return _redirect("/super-admin/cafes")
+
+
+@router.get("/super-admin/cafes", response_class=HTMLResponse)
+async def super_admin_cafes_get(
+    request: Request,
+    msg: Optional[str] = None,
+    ok: Optional[str] = None,
+    _allowed: bool = Depends(super_admin_required()),
+) -> HTMLResponse:
+    settings = get_settings()
+    async with db.session_scope(settings) as s:
+        cafes = await services.web_superadmin_list_cafes(s)
+
+    return _templates(request).TemplateResponse(
+        "super_admin_cafes.html",
+        {
+            "request": request,
+            "cafes": cafes,
+            "flash_message": msg,
+            "flash_ok": (ok != "0"),
+        },
+    )
+
+
+@router.post("/super-admin/cafes/create")
+async def super_admin_cafes_create_post(
+    request: Request,
+    name: str = Form(...),
+    legal_name: Optional[str] = Form(None),
+    web_login: str = Form(...),
+    web_password: str = Form(...),
+    admin_password: str = Form(...),
+    is_active: str = Form("1"),
+    _allowed: bool = Depends(super_admin_required()),
+) -> RedirectResponse:
+    settings = get_settings()
+    try:
+        async with db.session_scope(settings) as s:
+            await services.web_superadmin_create_cafe(
+                s,
+                name=name,
+                legal_name=legal_name,
+                web_login=web_login,
+                web_password=web_password,
+                admin_password=admin_password,
+                is_active=(str(is_active) != "0"),
+            )
+    except services.ServiceError as e:
+        return _flash_redirect("/super-admin/cafes", msg=e.message, ok=False)
+    except Exception:
+        return _flash_redirect("/super-admin/cafes", msg="Не удалось создать кофейню.", ok=False)
+
+    return _flash_redirect("/super-admin/cafes", msg="Кофейня создана.", ok=True)
+
+
+@router.post("/super-admin/cafes/{cafe_id}/update")
+async def super_admin_cafes_update_post(
+    request: Request,
+    cafe_id: int,
+    name: Optional[str] = Form(None),
+    legal_name: Optional[str] = Form(None),
+    web_login: Optional[str] = Form(None),
+    web_password: Optional[str] = Form(None),
+    admin_password: Optional[str] = Form(None),
+    is_active: Optional[str] = Form(None),
+    _allowed: bool = Depends(super_admin_required()),
+) -> RedirectResponse:
+    settings = get_settings()
+
+    web_password_clean = None
+    if web_password is not None and str(web_password).strip() != "":
+        web_password_clean = web_password
+
+    admin_password_clean = None
+    if admin_password is not None and str(admin_password).strip() != "":
+        admin_password_clean = admin_password
+
+    is_active_bool: bool | None = None
+    if is_active is not None:
+        is_active_bool = (str(is_active) != "0")
+
+    try:
+        async with db.session_scope(settings) as s:
+            ok_ = await services.web_superadmin_update_cafe(
+                s,
+                cafe_id=int(cafe_id),
+                name=name,
+                legal_name=legal_name,
+                web_login=web_login,
+                web_password=web_password_clean,
+                admin_password=admin_password_clean,
+                is_active=is_active_bool,
+            )
+            if not ok_:
+                return _flash_redirect("/super-admin/cafes", msg="Кофейня не найдена.", ok=False)
+    except services.ServiceError as e:
+        return _flash_redirect("/super-admin/cafes", msg=e.message, ok=False)
+    except Exception:
+        return _flash_redirect("/super-admin/cafes", msg="Не удалось обновить кофейню.", ok=False)
+
+    return _flash_redirect("/super-admin/cafes", msg="Данные кофейни обновлены.", ok=True)
 
 
 @router.get("/orders", response_class=HTMLResponse)
